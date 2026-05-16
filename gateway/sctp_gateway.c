@@ -84,9 +84,13 @@ void* handle_client(void* arg) {
 
     printf("Bytes Received: %d\n",
         session.bytes_transferred);
+    struct tm *tm_info = localtime(&session.start_time);
 
-    printf("Start Time: %ld\n",
-        session.start_time);
+    char buf[64];
+    strftime(buf, sizeof(buffer),
+            "%Y-%m-%d %H:%M:%S", tm_info);
+
+    printf("Start Time: %s\n", buf);
 
     printf("==================================\n");
 
@@ -143,14 +147,14 @@ void* handle_client(void* arg) {
         printf("[Gateway] Encrypted and Forwarded\n");
     }
 
-    if (send(sctp_fd,
-         buffer,
-         strlen(buffer),
-         0) < 0) {
-        perror("Send plaintext failed");
-    } else {
-        printf("[Gateway] Forwarded to SCTP Receiver\n");
-    }
+    // if (send(sctp_fd,
+    //      buffer,
+    //      strlen(buffer),
+    //      0) < 0) {
+    //     perror("Send plaintext failed");
+    // } else {
+    //     printf("[Gateway] Forwarded to SCTP Receiver\n");
+    // }
 
     close(sctp_fd);
     close(tcp_client_fd);
