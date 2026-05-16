@@ -36,6 +36,8 @@ void encrypt_data(unsigned char *plaintext,
 
 void* handle_client(void* arg) {
 
+    clock_t start_clock = clock();
+
     int tcp_client_fd = *((int*)arg);
 
     Session session;
@@ -159,6 +161,24 @@ void* handle_client(void* arg) {
     close(sctp_fd);
     close(tcp_client_fd);
 
+    clock_t end_clock = clock();
+
+    double processing_time =
+        ((double)(end_clock - start_clock))
+        / CLOCKS_PER_SEC;
+
+    printf("[Metrics] Processing Time: %.6f sec\n",
+        processing_time);
+
+    double throughput =
+    session.bytes_transferred /
+    processing_time;
+
+    printf("[Metrics] Throughput: %.2f bytes/sec\n",
+        throughput);
+
+    
+        
     return NULL;
 }
 
