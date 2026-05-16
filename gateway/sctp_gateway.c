@@ -6,77 +6,101 @@
 #include <arpa/inet.h>
 #include <netinet/sctp.h>
 
-#define PORT 5000
+#define TCP_PORT 4000
+#define SCTP_PORT 5000
+
 #define BUFFER_SIZE 1024
 
-void start_sctp_server() {
 
-    int server_fd, client_fd;
+void start_gateway() {
 
-    struct sockaddr_in server_addr;
+    int tcp_server_fd, tcp_client_fd;
+
+    int sctp_fd;
+
+    struct sockaddr_in tcp_addr;
+    struct sockaddr_in sctp_addr;
 
     char buffer[BUFFER_SIZE];
 
-    server_fd = socket(AF_INET,
-                       SOCK_STREAM,
-                       IPPROTO_SCTP);
+    tcp_server_fd = socket(AF_INET,
+                           SOCK_STREAM,
+                           0);
 
-    if(server_fd < 0) {
-        perror("Socket creation failed");
+    if(tcp_server_fd < 0) {
+        perror("TCP socket failed");
         exit(1);
     }
 
-    memset(&server_addr, 0, sizeof(server_addr));
+    memset(&tcp_addr, 0, sizeof(tcp_addr));
 
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(PORT);
-    server_addr.sin_addr.s_addr = INADDR_ANY;
+    tcp_addr.sin_family = AF_INET;
+    tcp_addr.sin_port = htons(TCP_PORT);
+    tcp_addr.sin_addr.s_addr = INADDR_ANY;
 
-    if(bind(server_fd,
-            (struct sockaddr*)&server_addr,
-            sizeof(server_addr)) < 0) {
+    bind(tcp_server_fd,
+         (struct sockaddr*)&tcp_addr,
+         sizeof(tcp_addr));
 
-        perror("Bind failed");
-        exit(1);
-    }
+    listen(tcp_server_fd, 5);
 
-    if(listen(server_fd, 5) < 0) {
-
-        perror("Listen failed");
-        exit(1);
-    }
-
-    printf("SCTP Server Listening on port %d\n", PORT);
+    printf("Gateway Listening for TCP Clients...\n");
 
     while(1) {
 
-        client_fd = accept(server_fd, NULL, NULL);
+        tcp_client_fd = accept(tcp_server_fd,
+                               NULL,
+                               NULL);
 
-        if(client_fd < 0) {
-            perror("Accept failed");
-            continue;
-        }
+        printf("TCP Client Connected\n");
 
         memset(buffer, 0, BUFFER_SIZE);
 
-        int bytes = recv(client_fd,
+        int bytes = recv(tcp_client_fd,
                          buffer,
                          BUFFER_SIZE,
                          0);
 
-        if(bytes > 0) {
-
-            buffer[bytes] = '\0';
-
-            printf("Received: %s\n", buffer);
-
-        } else {
-
-            printf("No data received\n");
+        if(bytes <= 0) {
+            close(tcp_client_fd);
+            continue;
         }
 
-        close(client_fd);
-    }
+        buffer[bytes] = '\0';
 
-    close(server_fd);
+        printf("Gateway Received TCP Data: %s\n", buffer);
+
+        sctp_fd = socket(AF_INET,
+                         SOCK_STREAM,
+                         IPPROTO_SCTP);
+
+        memset(&sctp_addr, 0, sizeof(sctp_addr));
+
+        sctp_addr.sin_family = AF_INET;
+        sctp_addr.sin_port = htons(SCTP_PORT);
+
+        inet_pton(AF_INET,
+                  "127.0.0.1",
+                  &sctp_addr.sin_addr);
+
+        if(connect(sctp_fd,
+                   (struct sockaddr*)&sctp_addr,
+                   sizeof(sctp_addr)) < 0) {
+
+            perror("SCTP connect failed");
+
+            close(tcp_client_fd);
+            continue;
+        }
+
+        send(sctp_fd,
+             buffer,
+             strlen(buffer),
+             0);
+
+        printf("Forwarded to SCTP Receiver\n");
+
+        close(sctp_fd);
+        close(tcp_client_fd);
+    }
 }

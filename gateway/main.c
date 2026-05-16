@@ -1,12 +1,12 @@
 #include <stdio.h>
 
-void start_sctp_server();
+void start_gateway();
 
 int main() {
 
-    printf("Starting Gateway...\n");
+    printf("Starting TCP → SCTP Gateway\n");
 
-    start_sctp_server();
+    start_gateway();
 
     return 0;
 }
