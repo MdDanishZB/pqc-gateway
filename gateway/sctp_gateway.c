@@ -92,7 +92,7 @@ void* handle_client(void* arg) {
     struct tm *tm_info = localtime(&session.start_time);
 
     char buf[64];
-    strftime(buf, sizeof(buffer),
+    strftime(buf, sizeof(buf),
             "%Y-%m-%d %H:%M:%S", tm_info);
 
     printf("Start Time: %s\n", buf);
@@ -135,21 +135,6 @@ void* handle_client(void* arg) {
         pthread_exit(NULL);
     }
 
-    char metrics[256];
-
-    sprintf(metrics,
-            "session=%d bytes=%d",
-            session.session_id,
-            session.bytes_transferred);
-
-    char ai_response[100];
-
-    query_ai(metrics,
-            ai_response);
-
-    printf("[AI Decision] %s\n",
-        ai_response);
-
     unsigned char encrypted[1024];
 
     int encrypted_len;
@@ -167,15 +152,6 @@ void* handle_client(void* arg) {
         printf("[Gateway] Encrypted and Forwarded\n");
     }
 
-    // if (send(sctp_fd,
-    //      buffer,
-    //      strlen(buffer),
-    //      0) < 0) {
-    //     perror("Send plaintext failed");
-    // } else {
-    //     printf("[Gateway] Forwarded to SCTP Receiver\n");
-    // }
-
     close(sctp_fd);
     close(tcp_client_fd);
 
@@ -190,13 +166,51 @@ void* handle_client(void* arg) {
 
     double throughput =
     session.bytes_transferred /
-    processing_time;
+    (processing_time > 0 ? processing_time : 0.000001);
 
     printf("[Metrics] Throughput: %.2f bytes/sec\n",
         throughput);
 
-    
-        
+    char metrics[256];
+
+    double latency = processing_time * 1000;
+
+    double jitter = (double)(rand() % 20);
+
+    double packet_loss = (double)(rand() % 5);
+
+    double throughput_metric = throughput;
+
+    sprintf(metrics,
+            "%.2f,%.2f,%.2f,%.2f",
+            latency,
+            jitter,
+            packet_loss,
+            throughput_metric);
+
+    char ai_response[100];
+
+    query_ai(metrics,
+            ai_response);
+
+    printf("[AI Decision] %s\n",
+        ai_response);
+
+    if(strcmp(ai_response, "LOW") == 0) {
+
+        printf("[Security Mode] Kyber-512\n");
+
+    }
+    else if(strcmp(ai_response, "MEDIUM") == 0) {
+
+        printf("[Security Mode] Kyber-768\n");
+
+    }
+    else {
+
+        printf("[Security Mode] Kyber-1024\n");
+    }
+
     return NULL;
 }
 
