@@ -9,6 +9,22 @@
 
 #include <pthread.h>
 
+#include <time.h>
+
+typedef struct {
+
+    int session_id;
+
+    char client_ip[64];
+
+    time_t start_time;
+
+    int bytes_transferred;
+
+} Session;
+
+int global_session_id = 1;
+
 #define TCP_PORT 4000
 #define SCTP_PORT 5000
 
@@ -21,6 +37,16 @@ void encrypt_data(unsigned char *plaintext,
 void* handle_client(void* arg) {
 
     int tcp_client_fd = *((int*)arg);
+
+    Session session;
+
+    session.session_id = global_session_id++;
+
+    strcpy(session.client_ip, "127.0.0.1");
+
+    session.start_time = time(NULL);
+
+    session.bytes_transferred = 0;
 
     free(arg);
 
@@ -36,6 +62,8 @@ void* handle_client(void* arg) {
                      buffer,
                      sizeof(buffer),
                      0);
+    
+    session.bytes_transferred += bytes;
 
     if(bytes <= 0) {
 
@@ -46,8 +74,23 @@ void* handle_client(void* arg) {
 
     buffer[bytes] = '\0';
 
-    printf("\n[Gateway] Received TCP Data: %s\n",
-           buffer);
+    printf("\n========== SESSION INFO ==========\n");
+
+    printf("Session ID: %d\n",
+        session.session_id);
+
+    printf("Client IP: %s\n",
+        session.client_ip);
+
+    printf("Bytes Received: %d\n",
+        session.bytes_transferred);
+
+    printf("Start Time: %ld\n",
+        session.start_time);
+
+    printf("==================================\n");
+
+    printf("\n[Gateway] Received TCP Data: %s\n",buffer);
 
     sctp_fd = socket(AF_INET,
                      SOCK_STREAM,
