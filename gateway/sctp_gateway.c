@@ -23,6 +23,9 @@ typedef struct {
 
 } Session;
 
+void query_ai(char *metrics,
+              char *response);
+
 int global_session_id = 1;
 
 #define TCP_PORT 4000
@@ -131,6 +134,21 @@ void* handle_client(void* arg) {
 
         pthread_exit(NULL);
     }
+
+    char metrics[256];
+
+    sprintf(metrics,
+            "session=%d bytes=%d",
+            session.session_id,
+            session.bytes_transferred);
+
+    char ai_response[100];
+
+    query_ai(metrics,
+            ai_response);
+
+    printf("[AI Decision] %s\n",
+        ai_response);
 
     unsigned char encrypted[1024];
 
