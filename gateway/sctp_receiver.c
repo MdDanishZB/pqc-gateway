@@ -32,26 +32,60 @@ int main() {
     server_addr.sin_port = htons(SCTP_PORT);
     server_addr.sin_addr.s_addr = INADDR_ANY;
 
-    bind(server_fd,
-         (struct sockaddr*)&server_addr,
-         sizeof(server_addr));
+    if(bind(server_fd,
+            (struct sockaddr*)&server_addr,
+            sizeof(server_addr)) < 0) {
 
-    listen(server_fd, 5);
+        perror("Bind failed");
+        exit(1);
+    }
+
+    if(listen(server_fd, 5) < 0) {
+
+        perror("Listen failed");
+        exit(1);
+    }
 
     printf("SCTP Receiver Listening...\n");
 
-    client_fd = accept(server_fd, NULL, NULL);
+    while(1) {
 
-    int bytes = recv(client_fd,
-                     buffer,
-                     BUFFER_SIZE,
-                     0);
+        client_fd = accept(server_fd,
+                           NULL,
+                           NULL);
 
-    buffer[bytes] = '\0';
+        if(client_fd < 0) {
 
-    printf("SCTP Receiver Got: %s\n", buffer);
+            perror("Accept failed");
 
-    close(client_fd);
+            continue;
+        }
+
+        memset(buffer, 0, BUFFER_SIZE);
+
+        int bytes = recv(client_fd,
+                         buffer,
+                         BUFFER_SIZE,
+                         0);
+
+        if(bytes > 0) {
+
+            printf("\n[SCTP Receiver] Encrypted Data Received\n");
+
+            printf("[SCTP Receiver] Raw Bytes: ");
+
+            for(int i = 0; i < bytes; i++) {
+
+                printf("%02X ",
+                       (unsigned char)buffer[i]);
+            }
+
+            printf("\n");
+        }
+
+        close(client_fd);
+    }
+
     close(server_fd);
 
     return 0;

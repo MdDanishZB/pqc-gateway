@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <signal.h>
 
 #include <arpa/inet.h>
 #include <netinet/sctp.h>
@@ -13,9 +14,15 @@
 
 #define BUFFER_SIZE 1024
 
+void encrypt_data(unsigned char *plaintext,
+                  unsigned char *ciphertext,
+                  int *cipher_len);
+
 void* handle_client(void* arg) {
 
-    int tcp_client_fd = *(int*)arg;
+    int tcp_client_fd = *((int*)arg);
+
+    free(arg);
 
     int sctp_fd;
 
@@ -76,29 +83,45 @@ void* handle_client(void* arg) {
         pthread_exit(NULL);
     }
 
-    send(sctp_fd,
+    unsigned char encrypted[1024];
+
+    int encrypted_len;
+
+    encrypt_data((unsigned char*)buffer,
+                encrypted,
+                &encrypted_len);
+
+    if (send(sctp_fd,
+        encrypted,
+        encrypted_len,
+        0) < 0) {
+        perror("Send encrypted failed");
+    } else {
+        printf("[Gateway] Encrypted and Forwarded\n");
+    }
+
+    if (send(sctp_fd,
          buffer,
          strlen(buffer),
-         0);
-
-    printf("[Gateway] Forwarded to SCTP Receiver\n");
+         0) < 0) {
+        perror("Send plaintext failed");
+    } else {
+        printf("[Gateway] Forwarded to SCTP Receiver\n");
+    }
 
     close(sctp_fd);
     close(tcp_client_fd);
 
-    pthread_exit(NULL);
+    return NULL;
 }
 
 void start_gateway() {
 
     int tcp_server_fd, tcp_client_fd;
 
-    int sctp_fd;
-
     struct sockaddr_in tcp_addr;
-    struct sockaddr_in sctp_addr;
 
-    char buffer[BUFFER_SIZE];
+    signal(SIGPIPE, SIG_IGN);
 
     tcp_server_fd = socket(AF_INET,
                            SOCK_STREAM,
@@ -115,9 +138,15 @@ void start_gateway() {
     tcp_addr.sin_port = htons(TCP_PORT);
     tcp_addr.sin_addr.s_addr = INADDR_ANY;
 
-    bind(tcp_server_fd,
+    int opt = 1;
+    setsockopt(tcp_server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    if (bind(tcp_server_fd,
          (struct sockaddr*)&tcp_addr,
-         sizeof(tcp_addr));
+         sizeof(tcp_addr)) < 0) {
+        perror("Bind failed");
+        exit(1);
+    }
 
     listen(tcp_server_fd, 5);
 
@@ -140,10 +169,14 @@ void start_gateway() {
 
         pthread_t tid;
 
+        int *client_ptr = malloc(sizeof(int));
+
+        *client_ptr = tcp_client_fd;
+
         pthread_create(&tid,
                     NULL,
                     handle_client,
-                    &tcp_client_fd);
+                    client_ptr);
 
         pthread_detach(tid);
     }
