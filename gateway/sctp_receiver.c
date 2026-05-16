@@ -9,6 +9,8 @@
 #define SCTP_PORT 5000
 #define BUFFER_SIZE 1024
 
+void decrypt_data(unsigned char *ciphertext,int cipher_len,unsigned char *plaintext,int *plain_len);
+
 int main() {
 
     int server_fd, client_fd;
@@ -70,15 +72,17 @@ int main() {
 
         if(bytes > 0) {
 
-            printf("\n[SCTP Receiver] Encrypted Data Received\n");
+            unsigned char decrypted[1024];
 
-            printf("[SCTP Receiver] Raw Bytes: ");
+            int decrypted_len;
 
-            for(int i = 0; i < bytes; i++) {
+            decrypt_data((unsigned char*)buffer,
+                        bytes,
+                        decrypted,
+                        &decrypted_len);
 
-                printf("%02X ",
-                       (unsigned char)buffer[i]);
-            }
+            printf("\n[SCTP Receiver] Decrypted Message: %s\n",
+                decrypted);
 
             printf("\n");
         }
