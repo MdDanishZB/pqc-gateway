@@ -154,7 +154,6 @@ void *handle_client(void *arg)
     /* ── 7. Forward payload & record outcome ─────────────────────────────── */
     int sent = (int)send(sctp_fd, encrypted, encrypted_len, 0);
     record_send_result(sent > 0);
-    update_bandwidth_ema(bytes, wall_ms > 0 ? wall_ms : 1.0);
 
     if (sent > 0) {
         printf("[Gateway] AES-256-GCM payload forwarded (%d bytes)\n",
@@ -171,6 +170,8 @@ void *handle_client(void *arg)
     clock_gettime(CLOCK_MONOTONIC, &wall_end);
     double wall_ms = (wall_end.tv_sec  - wall_start.tv_sec)  * 1000.0
                    + (wall_end.tv_nsec - wall_start.tv_nsec) / 1e6;
+
+    update_bandwidth_ema(bytes, wall_ms > 0 ? wall_ms : 1.0);
 
     double throughput_bps = bytes / (wall_ms / 1000.0);
     double final_loss_pct = get_packet_loss_pct();

@@ -11,7 +11,7 @@
  * Output layout: [ 12-byte IV | ciphertext | 16-byte TAG ]
  */
 static unsigned char default_key[32] =
-    "12345678901234567890123456789012";
+    "1234567890123456789012345678901";
 
 /*
  * encrypt_data_gcm:
