@@ -34,7 +34,7 @@ int multihome_server_create(const char *primary_ip,
                              const char *secondary_ip,
                              int         port)
 {
-    int fd = socket(AF_INET, SOCK_SEQPACKET, IPPROTO_SCTP);
+    int fd = socket(AF_INET, SOCK_STREAM, IPPROTO_SCTP);
     if (fd < 0) { perror("[MH] SCTP socket"); return -1; }
 
     int opt = 1;
@@ -79,7 +79,7 @@ int multihome_client_connect(const char *primary_ip,
                               int         port,
                               double     *latency_ms_out)
 {
-    int fd = socket(AF_INET, SOCK_SEQPACKET, IPPROTO_SCTP);
+    int fd = socket(AF_INET, SOCK_STREAM, IPPROTO_SCTP);
     if (fd < 0) { perror("[MH] SCTP socket"); return -1; }
 
     /*
