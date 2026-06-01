@@ -1,0 +1,59 @@
+.root {
+    -fx-background-color: #1a1a2e;
+    -fx-font-family: "Monospaced";
+}
+
+.header-bar {
+    -fx-background-color: #16213e;
+    -fx-border-color: #0f3460;
+    -fx-border-width: 0 0 2 0;
+}
+
+.header-title {
+    -fx-text-fill: #e0e0e0;
+    -fx-font-weight: bold;
+}
+
+.status-connected { -fx-text-fill: #00ff88; }
+
+.status-panel {
+    -fx-background-color: #16213e;
+    -fx-border-color: #0f3460;
+    -fx-border-width: 0 0 0 2;
+}
+
+.section-label {
+    -fx-text-fill: #4fc3f7;
+    -fx-font-weight: bold;
+    -fx-font-size: 12px;
+    -fx-padding: 8 0 2 0;
+}
+
+.stat-key   { -fx-text-fill: #90a4ae; -fx-font-size: 12px; }
+.stat-value { -fx-text-fill: #e0e0e0; -fx-font-size: 12px; -fx-font-weight: bold; }
+
+.pqc-chart {
+    -fx-background-color: #1a1a2e;
+}
+.pqc-chart .chart-plot-background { -fx-background-color: #0d1b2a; }
+.pqc-chart .axis { -fx-tick-label-fill: #90a4ae; }
+.pqc-chart .chart-title { -fx-text-fill: #b0bec5; -fx-font-size: 11px; }
+.pqc-chart .default-color0.chart-series-line { -fx-stroke: #00bcd4; -fx-stroke-width: 2px; }
+
+.table-view {
+    -fx-background-color: #1a1a2e;
+    -fx-control-inner-background: #16213e;
+    -fx-table-cell-border-color: #0f3460;
+}
+.table-view .column-header-background { -fx-background-color: #0f3460; }
+.table-view .column-header .label { -fx-text-fill: #b0bec5; }
+.table-row-cell { -fx-background-color: #16213e; -fx-text-fill: #e0e0e0; }
+.table-row-cell:odd { -fx-background-color: #1a1a2e; }
+.table-row-cell:selected { -fx-background-color: #0f3460; }
+
+.titled-pane > .title {
+    -fx-background-color: #0f3460;
+    -fx-text-fill: #b0bec5;
+}
+
+.separator .line { -fx-border-color: #0f3460; }

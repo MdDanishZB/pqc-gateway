@@ -6,91 +6,63 @@
 #include <arpa/inet.h>
 #include <netinet/sctp.h>
 
-#define SCTP_PORT 5000
-#define BUFFER_SIZE 1024
+#include "pqc_handshake.h"
+#include "multihoming.h"
 
-void decrypt_data(unsigned char *ciphertext,int cipher_len,unsigned char *plaintext,int *plain_len);
+#define BUFFER_SIZE 2048   /* large enough for IV + payload + TAG */
 
-int main() {
+int decrypt_data_gcm(unsigned char *key,
+                     unsigned char *input,
+                     int            input_len,
+                     unsigned char *plaintext,
+                     int           *plain_len);
 
-    int server_fd, client_fd;
+int main(void)
+{
+    /* Bind to both loopback IPs so the SCTP association spans both paths */
+    int server_fd = multihome_server_create(PRIMARY_IP, SECONDARY_IP, 5000);
+    if (server_fd < 0) exit(1);
 
-    struct sockaddr_in server_addr;
+    printf("SCTP Receiver ready (multi-homed).\n");
 
-    char buffer[BUFFER_SIZE];
+    while (1) {
+        int client_fd = accept(server_fd, NULL, NULL);
+        if (client_fd < 0) { perror("accept"); continue; }
 
-    server_fd = socket(AF_INET,
-                       SOCK_STREAM,
-                       IPPROTO_SCTP);
+        printf("\n[Receiver] Gateway connected\n");
 
-    if(server_fd < 0) {
-        perror("SCTP socket failed");
-        exit(1);
-    }
+        /* Enable heartbeat on accepted association */
+        enable_sctp_heartbeat(client_fd, HB_INTERVAL_MS);
 
-    memset(&server_addr, 0, sizeof(server_addr));
-
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(SCTP_PORT);
-    server_addr.sin_addr.s_addr = INADDR_ANY;
-
-    if(bind(server_fd,
-            (struct sockaddr*)&server_addr,
-            sizeof(server_addr)) < 0) {
-
-        perror("Bind failed");
-        exit(1);
-    }
-
-    if(listen(server_fd, 5) < 0) {
-
-        perror("Listen failed");
-        exit(1);
-    }
-
-    printf("SCTP Receiver Listening...\n");
-
-    while(1) {
-
-        client_fd = accept(server_fd,
-                           NULL,
-                           NULL);
-
-        if(client_fd < 0) {
-
-            perror("Accept failed");
-
+        /* ── PQC handshake — derive session key ────────────────────────── */
+        uint8_t shared_secret[PQC_SHARED_SECRET_LEN];
+        if (pqc_responder_handshake(client_fd, shared_secret) != 0) {
+            fprintf(stderr, "[Receiver] PQC handshake failed\n");
+            close(client_fd);
             continue;
         }
 
-        memset(buffer, 0, BUFFER_SIZE);
+        /* ── Receive encrypted payload ─────────────────────────────────── */
+        unsigned char buffer[BUFFER_SIZE];
+        memset(buffer, 0, sizeof(buffer));
 
-        int bytes = recv(client_fd,
-                         buffer,
-                         BUFFER_SIZE,
-                         0);
+        int bytes = recv(client_fd, buffer, sizeof(buffer), 0);
+        if (bytes > 0) {
+            unsigned char plaintext[BUFFER_SIZE];
+            int plain_len = 0;
 
-        if(bytes > 0) {
-
-            unsigned char decrypted[1024];
-
-            int decrypted_len;
-
-            decrypt_data((unsigned char*)buffer,
-                        bytes,
-                        decrypted,
-                        &decrypted_len);
-
-            printf("\n[SCTP Receiver] Decrypted Message: %s\n",
-                decrypted);
-
-            printf("\n");
+            if (decrypt_data_gcm(shared_secret, buffer, bytes,
+                                  plaintext, &plain_len) == 0) {
+                printf("[Receiver] Decrypted message (%d bytes): %s\n",
+                       plain_len, plaintext);
+            } else {
+                printf("[Receiver] Decryption / auth-tag check FAILED\n");
+            }
         }
 
         close(client_fd);
     }
 
     close(server_fd);
-
     return 0;
 }
