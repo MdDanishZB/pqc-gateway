@@ -1,13 +1,11 @@
 package com.pqcgateway.dashboard;
 
 import com.google.gson.*;
-import com.google.gson.reflect.TypeToken;
 import com.pqcgateway.analytics.MetricsAggregator;
 import javafx.animation.*;
 import javafx.application.Platform;
 import javafx.collections.*;
 import javafx.geometry.*;
-import javafx.scene.chart.*;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
@@ -17,22 +15,15 @@ import javafx.util.Duration;
 import java.net.URI;
 import java.net.http.*;
 import java.util.*;
-import java.util.stream.Collectors;
 
 public class DashboardController {
 
-    private static final String BASE_URL     = "http://127.0.0.1:8080/api";
-    private static final int    POLL_SECS    = 2;
-    private static final int    CHART_POINTS = 20;
+    private static final String BASE_URL  = "http://127.0.0.1:8080/api";
+    private static final int    POLL_SECS = 2;
 
     /* ── HTTP ──────────────────────────────────────────────────────────── */
     private final HttpClient http = HttpClient.newHttpClient();
     private final Gson       gson = new Gson();
-
-    /* ── chart series ──────────────────────────────────────────────────── */
-    private final XYChart.Series<Number, Number> latencySeries    = new XYChart.Series<>();
-    private final XYChart.Series<Number, Number> throughputSeries = new XYChart.Series<>();
-    private final XYChart.Series<Number, Number> lossSeries       = new XYChart.Series<>();
 
     /* ── status labels ─────────────────────────────────────────────────── */
     private final Label lblConnection  = new Label("● Connecting…");
@@ -58,7 +49,7 @@ public class DashboardController {
     public BorderPane buildLayout() {
         BorderPane root = new BorderPane();
         root.setTop(buildHeader());
-        root.setCenter(buildCenter());
+        root.setCenter(buildStatusPanel());
         root.setBottom(buildEventsTable());
         return root;
     }
@@ -80,66 +71,22 @@ public class DashboardController {
         return header;
     }
 
-    private SplitPane buildCenter() {
-        SplitPane split = new SplitPane(buildCharts(), buildStatusPanel());
-        split.setDividerPositions(0.68);
-        return split;
-    }
-
-    /* ── charts ──────────────────────────────────────────────────────────── */
-
-    private VBox buildCharts() {
-        latencySeries.setName("Latency (ms)");
-        throughputSeries.setName("Throughput (B/s)");
-        lossSeries.setName("Packet Loss (%)");
-
-        LineChart<Number, Number> latencyChart  = makeChart("Latency (ms)",    latencySeries);
-        LineChart<Number, Number> throughChart  = makeChart("Throughput (B/s)",throughputSeries);
-        LineChart<Number, Number> lossChart     = makeChart("Packet Loss (%)", lossSeries);
-
-        VBox charts = new VBox(8, latencyChart, throughChart, lossChart);
-        charts.setPadding(new Insets(10));
-        VBox.setVgrow(latencyChart,  Priority.ALWAYS);
-        VBox.setVgrow(throughChart,  Priority.ALWAYS);
-        VBox.setVgrow(lossChart,     Priority.ALWAYS);
-        return charts;
-    }
-
-    @SuppressWarnings("unchecked")
-    private LineChart<Number, Number> makeChart(String title,
-                                                XYChart.Series<Number, Number> series) {
-        NumberAxis xAxis = new NumberAxis();
-        NumberAxis yAxis = new NumberAxis();
-        xAxis.setAutoRanging(true);
-        xAxis.setLabel("Session");
-        yAxis.setAutoRanging(true);
-
-        LineChart<Number, Number> chart = new LineChart<>(xAxis, yAxis,
-                FXCollections.observableArrayList(series));
-        chart.setTitle(title);
-        chart.setAnimated(false);
-        chart.setCreateSymbols(false);
-        chart.setLegendVisible(false);
-        chart.getStyleClass().add("pqc-chart");
-        return chart;
-    }
-
     /* ── status panel ────────────────────────────────────────────────────── */
 
     private VBox buildStatusPanel() {
-        VBox panel = new VBox(12);
-        panel.setPadding(new Insets(16));
+        VBox panel = new VBox(16);
+        panel.setPadding(new Insets(32));
         panel.getStyleClass().add("status-panel");
 
         panel.getChildren().addAll(
                 sectionLabel("Current Session"),
-                statRow("AI Threat",    lblAiDecision),
-                statRow("Kyber Level",  lblKyberLevel),
-                statRow("Active Path",  lblActivePath),
+                statRow("AI Threat",      lblAiDecision),
+                statRow("Kyber Level",    lblKyberLevel),
+                statRow("Active Path",    lblActivePath),
                 new Separator(),
                 sectionLabel("Aggregate (last 50)"),
-                statRow("Sessions",     lblSessions),
-                statRow("Avg Latency",  lblAvgLatency),
+                statRow("Sessions",       lblSessions),
+                statRow("Avg Latency",    lblAvgLatency),
                 statRow("Avg Throughput", lblAvgThrput),
                 statRow("Dominant Mode",  lblDomMode)
         );
@@ -165,22 +112,22 @@ public class DashboardController {
 
     @SuppressWarnings("unchecked")
     private TitledPane buildEventsTable() {
-        TableColumn<PathEventRow, String> timeCol  = new TableColumn<>("Time");
-        TableColumn<PathEventRow, String> fromCol  = new TableColumn<>("From");
-        TableColumn<PathEventRow, String> toCol    = new TableColumn<>("To");
-        TableColumn<PathEventRow, String> reasonCol= new TableColumn<>("Reason");
+        TableColumn<PathEventRow, String> timeCol   = new TableColumn<>("Time");
+        TableColumn<PathEventRow, String> fromCol   = new TableColumn<>("From");
+        TableColumn<PathEventRow, String> toCol     = new TableColumn<>("To");
+        TableColumn<PathEventRow, String> reasonCol = new TableColumn<>("Reason");
 
         timeCol.setCellValueFactory(d -> new javafx.beans.property.SimpleStringProperty(d.getValue().time()));
         fromCol.setCellValueFactory(d -> new javafx.beans.property.SimpleStringProperty(d.getValue().from()));
         toCol.setCellValueFactory(d -> new javafx.beans.property.SimpleStringProperty(d.getValue().to()));
         reasonCol.setCellValueFactory(d -> new javafx.beans.property.SimpleStringProperty(d.getValue().reason()));
 
-        timeCol.setPrefWidth(160); fromCol.setPrefWidth(130);
-        toCol.setPrefWidth(130);   reasonCol.setPrefWidth(200);
+        timeCol.setPrefWidth(200); fromCol.setPrefWidth(160);
+        toCol.setPrefWidth(160);   reasonCol.setPrefWidth(300);
 
         TableView<PathEventRow> table = new TableView<>(eventRows);
         table.getColumns().addAll(timeCol, fromCol, toCol, reasonCol);
-        table.setPrefHeight(160);
+        table.setPrefHeight(180);
         table.setPlaceholder(new Label("No path events yet"));
 
         TitledPane pane = new TitledPane("Path Failover Events", table);
@@ -204,10 +151,8 @@ public class DashboardController {
     }
 
     private void poll() {
-        /* Run all HTTP calls on a background thread — never block the FX thread */
         new Thread(() -> {
             fetchStatus();
-            fetchMetrics();
             fetchPathEvents();
         }, "dashboard-poller").start();
     }
@@ -249,48 +194,13 @@ public class DashboardController {
         }
     }
 
-    /* ── fetch /api/metrics/recent ───────────────────────────────────────── */
-
-    private void fetchMetrics() {
-        try {
-            String body = get(BASE_URL + "/metrics/recent?n=" + CHART_POINTS);
-            JsonArray arr = gson.fromJson(body, JsonArray.class);
-            if (arr == null || arr.size() == 0) return;
-
-            List<double[]> points = new ArrayList<>();
-            for (JsonElement el : arr) {
-                JsonObject m = el.getAsJsonObject();
-                points.add(new double[]{
-                        m.has("latencyMs")     ? m.get("latencyMs").getAsDouble()     : 0,
-                        m.has("throughputBps") ? m.get("throughputBps").getAsDouble() : 0,
-                        m.has("packetLossPct") ? m.get("packetLossPct").getAsDouble() : 0,
-                });
-            }
-            Collections.reverse(points);   /* oldest first → left to right */
-
-            Platform.runLater(() -> {
-                latencySeries.getData().clear();
-                throughputSeries.getData().clear();
-                lossSeries.getData().clear();
-                /* Use simple 1-based sequential index so points are always on screen */
-                for (int i = 0; i < points.size(); i++) {
-                    double[] p = points.get(i);
-                    latencySeries.getData().add(new XYChart.Data<>(i + 1, p[0]));
-                    throughputSeries.getData().add(new XYChart.Data<>(i + 1, p[1]));
-                    lossSeries.getData().add(new XYChart.Data<>(i + 1, p[2]));
-                }
-            });
-        } catch (Exception e) {
-            System.err.println("[Dashboard] fetchMetrics error: " + e.getMessage());
-        }
-    }
-
     /* ── fetch /api/path-events/recent ──────────────────────────────────── */
 
     private void fetchPathEvents() {
         try {
             String body = get(BASE_URL + "/path-events/recent?n=20");
             JsonArray arr = gson.fromJson(body, JsonArray.class);
+            if (arr == null) return;
 
             List<PathEventRow> rows = new ArrayList<>();
             for (JsonElement el : arr) {
@@ -304,9 +214,7 @@ public class DashboardController {
                 ));
             }
 
-            Platform.runLater(() -> {
-                eventRows.setAll(rows);
-            });
+            Platform.runLater(() -> eventRows.setAll(rows));
         } catch (Exception ignored) {}
     }
 
