@@ -33,7 +33,6 @@ public class DashboardController {
     private final XYChart.Series<Number, Number> latencySeries    = new XYChart.Series<>();
     private final XYChart.Series<Number, Number> throughputSeries = new XYChart.Series<>();
     private final XYChart.Series<Number, Number> lossSeries       = new XYChart.Series<>();
-    private int chartX = 0;
 
     /* ── status labels ─────────────────────────────────────────────────── */
     private final Label lblConnection  = new Label("● Connecting…");
@@ -205,9 +204,12 @@ public class DashboardController {
     }
 
     private void poll() {
-        fetchStatus();
-        fetchMetrics();
-        fetchPathEvents();
+        /* Run all HTTP calls on a background thread — never block the FX thread */
+        new Thread(() -> {
+            fetchStatus();
+            fetchMetrics();
+            fetchPathEvents();
+        }, "dashboard-poller").start();
     }
 
     /* ── fetch /api/status ───────────────────────────────────────────────── */
@@ -253,6 +255,7 @@ public class DashboardController {
         try {
             String body = get(BASE_URL + "/metrics/recent?n=" + CHART_POINTS);
             JsonArray arr = gson.fromJson(body, JsonArray.class);
+            if (arr == null || arr.size() == 0) return;
 
             List<double[]> points = new ArrayList<>();
             for (JsonElement el : arr) {
@@ -263,22 +266,23 @@ public class DashboardController {
                         m.has("packetLossPct") ? m.get("packetLossPct").getAsDouble() : 0,
                 });
             }
-            Collections.reverse(points);   /* oldest first */
+            Collections.reverse(points);   /* oldest first → left to right */
 
             Platform.runLater(() -> {
                 latencySeries.getData().clear();
                 throughputSeries.getData().clear();
                 lossSeries.getData().clear();
-                int x = chartX - points.size();
-                for (double[] p : points) {
-                    latencySeries.getData().add(new XYChart.Data<>(x, p[0]));
-                    throughputSeries.getData().add(new XYChart.Data<>(x, p[1]));
-                    lossSeries.getData().add(new XYChart.Data<>(x, p[2]));
-                    x++;
+                /* Use simple 1-based sequential index so points are always on screen */
+                for (int i = 0; i < points.size(); i++) {
+                    double[] p = points.get(i);
+                    latencySeries.getData().add(new XYChart.Data<>(i + 1, p[0]));
+                    throughputSeries.getData().add(new XYChart.Data<>(i + 1, p[1]));
+                    lossSeries.getData().add(new XYChart.Data<>(i + 1, p[2]));
                 }
-                chartX++;
             });
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            System.err.println("[Dashboard] fetchMetrics error: " + e.getMessage());
+        }
     }
 
     /* ── fetch /api/path-events/recent ──────────────────────────────────── */
