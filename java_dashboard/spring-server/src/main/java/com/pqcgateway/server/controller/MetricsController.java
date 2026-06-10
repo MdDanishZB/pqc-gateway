@@ -42,15 +42,36 @@ public class MetricsController {
     /* ── query (called by JavaFX dashboard) ────────────────────────────── */
 
     @GetMapping("/metrics/recent")
-    public List<SessionMetrics> recentMetrics(
+    public List<Map<String, Object>> recentMetrics(
             @RequestParam(defaultValue = "50") int n) {
-        return store.getRecentSessions(n);
+        return store.getRecentSessions(n).stream().map(m -> {
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("sessionId",        m.getSessionId());
+            row.put("timestamp",        m.getTimestamp());
+            row.put("latencyMs",        m.getLatencyMs());
+            row.put("jitterMs",         m.getJitterMs());
+            row.put("packetLossPct",    m.getPacketLossPct());
+            row.put("throughputBps",    m.getThroughputBps());
+            row.put("aiDecision",       m.getAiDecision());
+            row.put("kyberLevel",       m.getKyberLevel());
+            row.put("activePath",       m.getActivePath());
+            row.put("bytesTransferred", m.getBytesTransferred());
+            row.put("processingTimeMs", m.getProcessingTimeMs());
+            return row;
+        }).collect(java.util.stream.Collectors.toList());
     }
 
     @GetMapping("/path-events/recent")
-    public List<PathEvent> recentPathEvents(
+    public List<Map<String, Object>> recentPathEvents(
             @RequestParam(defaultValue = "20") int n) {
-        return store.getRecentPathEvents(n);
+        return store.getRecentPathEvents(n).stream().map(e -> {
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("timestamp", e.getTimestamp());
+            row.put("fromPath",  e.getFromPath());
+            row.put("toPath",    e.getToPath());
+            row.put("reason",    e.getReason());
+            return row;
+        }).collect(java.util.stream.Collectors.toList());
     }
 
     @GetMapping("/status")
