@@ -6,7 +6,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 
-#define DASHBOARD_HOST "127.0.0.1"
+#define DASHBOARD_HOST "192.168.64.1"   /* Mac host IP as seen from UTM VM — change if different */
 #define DASHBOARD_PORT 8080
 #define CONN_TIMEOUT_S 1
 
