@@ -274,7 +274,7 @@ Optionally, in a fifth terminal, start the Java dashboard:
 ```
 Terminal 5a — Spring Boot REST server
   cd java_dashboard && mvn -pl spring-server spring-boot:run
-
+  
 Terminal 5b — JavaFX UI
   cd java_dashboard && mvn -pl dashboard-ui javafx:run
 ```
