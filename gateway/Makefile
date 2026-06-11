@@ -1,6 +1,6 @@
 CC     = gcc
-CFLAGS = -Wall -Wextra
-LIBS   = -lsctp -lpthread -lssl -lcrypto -loqs
+CFLAGS = -Wall -Wextra -I/home/danish/liboqs/install/usr/local/include
+LIBS   = -L/home/danish/liboqs/install/usr/local/lib -lsctp -lpthread -lssl -lcrypto -loqs
 
 all: gateway sctp_receiver tcp_client
 

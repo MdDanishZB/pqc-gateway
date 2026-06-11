@@ -7,9 +7,9 @@ TCP Client → [Gateway] → PQC Handshake → AES-256-GCM → SCTP → Receiver
                  ↕                               ↕
            AI Model Server              Path Monitor Thread
                  ↕                               ↕
-          Unix Domain Socket            Spring Boot REST API
+          Unix Domain Socket             HTTP POST (Python)
                                                ↕
-                                        JavaFX Live Dashboard
+                                        Streamlit Live Dashboard
 ```
 
 ---
@@ -249,34 +249,35 @@ Run once after cloning:
 ```bash
 chmod +x scripts/setup_net.sh
 ./scripts/setup_net.sh
+# Manually build liboqs from source if not already installed system-wide:
+# cd liboqs && mkdir -p build && cd build && cmake -DOQS_DIST_BUILD=ON .. && make -j$(nproc) && make install DESTDIR=/home/danish/liboqs/install
 ```
 
-This installs: `libsctp-dev`, `libssl-dev`, `liboqs-dev`, `iproute2`, `iptables`, `python3-pip`, `default-jdk`, `maven`. Adds `127.0.0.2` to the loopback interface, builds the gateway, and trains the AI model.
+This installs: `libsctp-dev`, `libssl-dev`, `iproute2`, `iptables`, `python3-pip`, `default-jdk`, `maven`. Adds `127.0.0.2` to the loopback interface, builds the gateway, and trains the AI model.
 
-### Run order (4 terminals)
+### Run order (4 terminals + Streamlit Dashboard)
 
 ```
 Terminal 1  — AI model server
-  cd ai_module && python3 model_server.py
+  cd ai_module && source venv/bin/activate && python3 model_server.py
 
-Terminal 2  — SCTP receiver (the backend the gateway forwards to)
+Terminal 2  — Streamlit Dashboard Receiver (HTTP listener on 8080)
+  cd ai_module/dashboard && source ../venv/bin/activate && python3 receiver.py
+
+Terminal 3  — SCTP receiver (the backend the gateway forwards to)
   cd gateway && ./sctp_receiver
 
-Terminal 3  — Gateway
+Terminal 4  — Gateway
   cd gateway && ./gateway
 
-Terminal 4  — Send a test message
-  cd gateway && ./tcp_client
+Terminal 5  — Streamlit Dashboard App (Open http://127.0.0.1:8501 in your browser)
+  cd ai_module/dashboard && source ../venv/bin/activate && streamlit run app.py --server.port 8501 --server.headless true
 ```
 
-Optionally, in a fifth terminal, start the Java dashboard:
-
+Optional: Send a test message
 ```
-Terminal 5a — Spring Boot REST server
-  cd java_dashboard && mvn -pl spring-server spring-boot:run
-  
-Terminal 5b — JavaFX UI
-  cd java_dashboard && mvn -pl dashboard-ui javafx:run
+Terminal 6  — Send a test message
+  cd gateway && ./tcp_client "Hello PQC Gateway!"
 ```
 
 ---

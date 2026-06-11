@@ -274,10 +274,16 @@ int pqc_responder_handshake(int fd,
     printf("[PQC] Hybrid handshake — responder — %s\n", level_to_name(level));
 
     uint8_t peer_ecdh_pub[ECDH_KEY_LEN];
-    if (read_exact(fd, peer_ecdh_pub, ECDH_KEY_LEN) != 0) return -1;
+    if (read_exact(fd, peer_ecdh_pub, ECDH_KEY_LEN) != 0) {
+        fprintf(stderr, "[PQC] Failed to read peer ECDH pubkey\n");
+        return -1;
+    }
 
     OQS_KEM *kem = OQS_KEM_new(alg);
-    if (!kem) return -1;
+    if (!kem) {
+        fprintf(stderr, "[PQC] Failed to create KEM object for %s\n", alg);
+        return -1;
+    }
 
     uint8_t *kyber_peer_pub = malloc(kem->length_public_key);
     uint8_t *kyber_ct       = malloc(kem->length_ciphertext);
@@ -285,7 +291,10 @@ int pqc_responder_handshake(int fd,
 
     if (!kyber_peer_pub || !kyber_ct) goto cleanup;
 
-    if (read_exact(fd, kyber_peer_pub, kem->length_public_key) != 0) goto cleanup;
+    if (read_exact(fd, kyber_peer_pub, kem->length_public_key) != 0) {
+        fprintf(stderr, "[PQC] Failed to read peer Kyber pubkey\n");
+        goto cleanup;
+    }
 
     printf("[PQC] ← Received X25519 pubkey (32 B) + Kyber pubkey (%zu B)\n",
            kem->length_public_key);
