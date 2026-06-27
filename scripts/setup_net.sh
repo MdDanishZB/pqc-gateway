@@ -48,13 +48,9 @@ pip3 install --quiet scikit-learn pandas joblib
 banner "Building gateway"
 make -C "$REPO_ROOT/gateway" clean all
 
-# ── 6. Train AI model (if not already trained) ───────────────────────────────
-banner "Training AI model"
-if [ ! -f "$REPO_ROOT/ai_module/models/rf_model.pkl" ]; then
-    (cd "$REPO_ROOT/ai_module" && python3 train_model.py)
-else
-    echo "  Model already trained — skipping"
-fi
+# ── 6. Train AI model ────────────────────────────────────────────────────────
+banner "Generating dataset and training AI model"
+(cd "$REPO_ROOT/ai_module" && python3 generate_dataset.py && python3 train_model.py)
 
 banner "Setup complete"
 echo

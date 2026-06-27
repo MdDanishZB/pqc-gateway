@@ -25,6 +25,23 @@ def init_db():
                     to_path TEXT,
                     reason TEXT
                  )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS llm_analysis (
+                    id INTEGER PRIMARY KEY,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    metrics_summary TEXT,
+                    threat_level TEXT,
+                    attack_type TEXT,
+                    confidence REAL,
+                    explanation TEXT,
+                    recommendation TEXT,
+                    inference_time_ms REAL
+                )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS chat_history (
+                    id INTEGER PRIMARY KEY,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    role TEXT,
+                    message TEXT
+                )''')
     conn.commit()
     conn.close()
 
