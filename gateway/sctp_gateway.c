@@ -10,6 +10,7 @@
 #include <time.h>
 
 #include "pqc_handshake.h"
+#include "crypto_policy.h"
 #include "metrics.h"
 #include "multihoming.h"
 #include "path_monitor.h"
@@ -86,21 +87,30 @@ void *handle_client(void *arg)
     double throughput   = (double)bytes;
     double bw_util      = get_bandwidth_util_pct();
 
+    /* Publish this session's payload size so the path monitor reports the same
+     * "throughput" feature the model trained on (instead of an SCTP cwnd). */
+    record_throughput_bytes(bytes);
+
     char metrics_str[256];
     snprintf(metrics_str, sizeof(metrics_str),
              "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f",
              latency_ms, jitter_ms, loss_pct, throughput,
              iat_ms, bw_util);
 
-    /* ── 3. Query AI → Kyber security level ─────────────────────────────── */
+    /* ── 3. Query AI → network-threat verdict (drives TRANSPORT, not crypto) ─ */
     char ai_response[64];
     memset(ai_response, 0, sizeof(ai_response));
     query_ai(metrics_str, ai_response);
 
-    KyberLevel level = ai_response_to_level(ai_response);
     printf("\n[AI] Threat level: %-6s  latency=%.2fms  jitter=%.2fms"
            "  loss=%.1f%%  iat=%.1fms  bw=%.1f%%\n",
            ai_response, latency_ms, jitter_ms, loss_pct, iat_ms, bw_util);
+
+    /* ── 3b. Select crypto strength — DECOUPLED from the threat verdict ───── */
+    /* The KEM is pinned at the security floor; only an explicit high-assurance
+     * signal raises it, and battery pressure can never lower it (see crypto_policy). */
+    SecurityPosture posture = { .high_assurance = 0, .battery_pressure = 0 };
+    KyberLevel level = select_kem(&posture);
 
     /* ── 4. Open multi-homed SCTP connection using AI-preferred path ────── */
     double connect_ms = 0.0;
@@ -179,10 +189,10 @@ void *handle_client(void *arg)
     printf("[Metrics] Throughput        : %.2f bytes/sec\n", throughput_bps);
     printf("[Metrics] Rolling loss      : %.1f%%\n", final_loss_pct);
 
-    /* Determine Kyber level name from AI response for the dashboard */
+    /* Report the ACTUAL negotiated KEM level (decoupled from the threat verdict) */
     const char *kyber_str =
-        (strcmp(ai_response, "HIGH")   == 0) ? "Kyber-1024" :
-        (strcmp(ai_response, "MEDIUM") == 0) ? "Kyber-768"  : "Kyber-512";
+        (level == KYBER_1024) ? "ML-KEM-1024" :
+        (level == KYBER_768)  ? "ML-KEM-768"  : "ML-KEM-512";
 
     report_session_metrics(
         session.session_id,

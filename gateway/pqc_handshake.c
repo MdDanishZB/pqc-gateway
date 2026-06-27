@@ -1,4 +1,5 @@
 #include "pqc_handshake.h"
+#include "crypto_policy.h"   /* CRYPTO_FLOOR — responder-side downgrade floor */
 
 #include <oqs/oqs.h>
 #include <openssl/evp.h>
@@ -54,10 +55,10 @@ static const char *level_to_alg(KyberLevel level)
 static const char *level_to_name(KyberLevel level)
 {
     switch (level) {
-        case KYBER_512:  return "Kyber-512  (LOW)";
-        case KYBER_768:  return "Kyber-768  (MEDIUM)";
-        case KYBER_1024: return "Kyber-1024 (HIGH)";
-        default:         return "Kyber-512";
+        case KYBER_512:  return "ML-KEM-512";
+        case KYBER_768:  return "ML-KEM-768";
+        case KYBER_1024: return "ML-KEM-1024";
+        default:         return "ML-KEM-768";
     }
 }
 
@@ -162,15 +163,6 @@ cleanup:
     return ret;
 }
 
-/* ── public API ─────────────────────────────────────────────────────────── */
-
-KyberLevel ai_response_to_level(const char *ai_response)
-{
-    if (strcmp(ai_response, "HIGH")   == 0) return KYBER_1024;
-    if (strcmp(ai_response, "MEDIUM") == 0) return KYBER_768;
-    return KYBER_512;
-}
-
 /* ── initiator ──────────────────────────────────────────────────────────── */
 
 int pqc_initiator_handshake(int fd, KyberLevel level,
@@ -270,6 +262,19 @@ int pqc_responder_handshake(int fd,
     if (read_exact(fd, &hdr, 1) != 0) return -1;
 
     KyberLevel level  = (KyberLevel)hdr;
+
+    /*
+     * Floor enforcement: reject any negotiated level below CRYPTO_FLOOR. Even
+     * without an authenticated transcript (Phase 4), this stops an on-wire
+     * tampered level byte from downgrading the session below the security floor.
+     */
+    if (level < CRYPTO_FLOOR) {
+        fprintf(stderr,
+                "[PQC] Rejected downgrade: requested level %d is below floor %d\n",
+                (int)level, (int)CRYPTO_FLOOR);
+        return -1;
+    }
+
     const char *alg   = level_to_alg(level);
     printf("[PQC] Hybrid handshake — responder — %s\n", level_to_name(level));
 

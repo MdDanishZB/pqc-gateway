@@ -50,4 +50,14 @@ void update_bandwidth_ema(int bytes, double elapsed_ms);
  */
 double get_bandwidth_util_pct(void);
 
+/*
+ * record_throughput_bytes / get_last_throughput_bytes —
+ * stores the payload size (bytes) of the most recent session so the path
+ * monitor can report the SAME "throughput" feature the model trained on,
+ * instead of substituting an unrelated quantity (e.g. the SCTP cwnd).
+ * Thread-safe. Returns 0.0 before the first session.
+ */
+void   record_throughput_bytes(int bytes);
+double get_last_throughput_bytes(void);
+
 #endif /* METRICS_H */

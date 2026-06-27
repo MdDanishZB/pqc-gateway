@@ -23,16 +23,16 @@ HIGH   – attack pattern (flood: very low IAT + high bw) OR
 import csv
 import random
 
+from features import FEATURES
+
 random.seed(42)
 
 ROWS_PER_CLASS = 100
 OUT_FILE = "dataset.csv"
 
-HEADER = [
-    "latency", "jitter", "packet_loss",
-    "throughput", "inter_arrival", "bandwidth_util",
-    "threat_level",
-]
+# Column order is owned by features.py so the dataset can never drift out of sync
+# with the model server / C gateway feature contract.
+HEADER = FEATURES + ["threat_level"]
 
 
 def rnd(lo, hi, decimals=2):

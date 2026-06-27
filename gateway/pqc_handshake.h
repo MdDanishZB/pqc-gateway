@@ -36,7 +36,11 @@ typedef enum {
  * breaking Kyber (classical side-channel) leaves X25519 intact.
  */
 
-KyberLevel ai_response_to_level(const char *ai_response);
+/*
+ * NOTE: the network-threat verdict no longer selects the KEM level. KEM selection
+ * lives in crypto_policy.h (select_kem) behind a fixed security floor. The responder
+ * additionally rejects any negotiated level below CRYPTO_FLOOR.
+ */
 
 /*
  * Initiator side — call after sctp_connectx() succeeds.

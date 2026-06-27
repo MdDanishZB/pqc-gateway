@@ -5,14 +5,9 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import classification_report
 import joblib
 
-FEATURES = [
-    "latency",
-    "jitter",
-    "packet_loss",
-    "throughput",
-    "inter_arrival",
-    "bandwidth_util",
-]
+# Single source of truth — must match the online inference path (model_server.py)
+# and the C gateway feature order. See features.py.
+from features import FEATURES
 
 data = pd.read_csv("dataset.csv")
 

@@ -132,3 +132,23 @@ double get_bandwidth_util_pct(void)
     double pct = (v / REF_BANDWIDTH_BPS) * 100.0;
     return pct > 100.0 ? 100.0 : pct;
 }
+
+/* ── last-session throughput (payload bytes) ────────────────────────────── */
+
+static pthread_mutex_t thru_mtx        = PTHREAD_MUTEX_INITIALIZER;
+static double          last_thru_bytes = 0.0;
+
+void record_throughput_bytes(int bytes)
+{
+    pthread_mutex_lock(&thru_mtx);
+    last_thru_bytes = (double)bytes;
+    pthread_mutex_unlock(&thru_mtx);
+}
+
+double get_last_throughput_bytes(void)
+{
+    pthread_mutex_lock(&thru_mtx);
+    double v = last_thru_bytes;
+    pthread_mutex_unlock(&thru_mtx);
+    return v;
+}

@@ -1,6 +1,7 @@
 #include "path_monitor.h"
 #include "multihoming.h"
 #include "metrics.h"
+#include "transport_policy.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -66,14 +67,14 @@ static void *monitor_loop(void *arg)
         }
 
         /* ── build metrics for AI ──────────────────────────────────────── */
+        /* Features MUST match the training schema (see ai_module/features.py).
+         * Previously this sent the SCTP cwnd as "throughput" and an inter-path
+         * RTT spread as "jitter" — both out-of-distribution, which made the
+         * model's verdicts arbitrary. Use the trained semantics instead. */
         double latency  = (double)primary_ps.rtt_ms;
-        double jitter   = (s_ok == 0)
-                          ? (double)(primary_ps.rtt_ms > secondary_ps.rtt_ms
-                                     ? primary_ps.rtt_ms - secondary_ps.rtt_ms
-                                     : secondary_ps.rtt_ms - primary_ps.rtt_ms)
-                          : update_jitter(latency);
+        double jitter   = update_jitter(latency);            /* |Δlatency| */
         double loss_pct = get_packet_loss_pct();
-        double thruput  = (double)primary_ps.cwnd;
+        double thruput  = get_last_throughput_bytes();       /* payload bytes, not cwnd */
         double iat_ms   = measure_iat_ms();
         double bw_util  = get_bandwidth_util_pct();
 
@@ -105,40 +106,48 @@ static void *monitor_loop(void *arg)
                "  loss=%.1f%%)\n",
                ai_resp, latency, jitter, loss_pct);
 
-        /* ── autonomous failover logic ─────────────────────────────────── */
+        /* ── transport decision (crypto strength is NOT touched here) ───── */
         pthread_mutex_lock(&state_lock);
         int currently_secondary = on_secondary;
         pthread_mutex_unlock(&state_lock);
 
-        int path_down   = (primary_ps.state == PATH_INACTIVE);
-        int high_threat = (strcmp(ai_resp, "HIGH") == 0);
-        int low_threat  = (strcmp(ai_resp, "LOW")  == 0);
+        TransportAction action = decide_transport(
+            ai_resp,
+            primary_ps.state == PATH_ACTIVE,    /* primary_active      */
+            primary_ps.state == PATH_INACTIVE,  /* primary_down        */
+            s_ok == 0,                          /* secondary_available */
+            currently_secondary);
 
-        if (!currently_secondary && s_ok == 0) {
-            if (path_down) {
-                printf("[Monitor] *** PRIMARY PATH DOWN — emergency failover ***\n");
+        switch (action) {
+            case TA_FAILOVER:
+                printf("[Monitor] *** PRIMARY PATH DOWN — emergency failover to"
+                       " secondary ***\n");
                 switch_primary_path(fd, SECONDARY_IP, 5000);
                 pthread_mutex_lock(&state_lock);
                 on_secondary = 1;
                 pthread_mutex_unlock(&state_lock);
+                break;
 
-            } else if (high_threat) {
-                printf("[Monitor] *** HIGH threat detected — autonomous changeover"
-                       " to secondary ***\n");
-                switch_primary_path(fd, SECONDARY_IP, 5000);
+            case TA_RATE_LIMIT:
+                printf("[Monitor] *** HIGH threat (flood) — RATE_LIMIT/alert;"
+                       " crypto floor unchanged, path held ***\n");
+                break;
+
+            case TA_RESTORE_PRIMARY:
+                printf("[Monitor] *** Threat cleared — restoring primary path ***\n");
+                switch_primary_path(fd, PRIMARY_IP, 5000);
                 pthread_mutex_lock(&state_lock);
-                on_secondary = 1;
+                on_secondary = 0;
                 pthread_mutex_unlock(&state_lock);
-            }
+                break;
 
-        } else if (currently_secondary && low_threat && p_ok == 0
-                   && primary_ps.state == PATH_ACTIVE) {
-            /* Threat cleared — restore primary path */
-            printf("[Monitor] *** Threat cleared — switching back to primary ***\n");
-            switch_primary_path(fd, PRIMARY_IP, 5000);
-            pthread_mutex_lock(&state_lock);
-            on_secondary = 0;
-            pthread_mutex_unlock(&state_lock);
+            case TA_ALERT:
+                printf("[Monitor] *** ALERT ***\n");
+                break;
+
+            case TA_NORMAL:
+            default:
+                break;
         }
 
         printf("[Monitor] ────────────────────────────────────────────────\n");
