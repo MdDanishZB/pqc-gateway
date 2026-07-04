@@ -1,5 +1,0 @@
-com/pqcgateway/server/PqcGatewayServerApplication.class
-com/pqcgateway/server/service/MetricsStore.class
-com/pqcgateway/server/model/SessionMetrics.class
-com/pqcgateway/server/controller/MetricsController.class
-com/pqcgateway/server/model/PathEvent.class
