@@ -8,6 +8,7 @@ dataset/*.parquet
 dataset/*.csv
 data/*.parquet
 data/*.csv
+ai_module/data/            # derived train/test splits (regenerable via prepare_dataset.py)
 ai_module/dataset.csv
 
 # ── Python ────────────────────────────────────────────────────────────────
@@ -42,8 +43,12 @@ gateway/tests/test_policy
 # ── Java dashboard (legacy) build output ──────────────────────────────────
 java_dashboard/**/target/
 
-# ── ML evaluation scratch (keep committed: metrics.json, confusion_matrix.png,
-#    MODEL_CARD.md — do NOT ignore those) ──────────────────────────────────
+# ── ML models ─────────────────────────────────────────────────────────────
+# Keep the serving model (rf_model.pkl), label_encoder.pkl, metrics.json and the
+# confusion-matrix PNGs committed. The per-split auxiliary models are large (~37 MB)
+# and regenerable via train_model.py, so ignore them.
+ai_module/models/rf_strat.pkl
+ai_module/models/rf_byday.pkl
 models/*.tmp
 
 # ── OS / editor ───────────────────────────────────────────────────────────
