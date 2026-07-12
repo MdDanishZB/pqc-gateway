@@ -7,15 +7,16 @@
 #define GCM_TAG_LEN 16
 
 /*
- * Placeholder session key — will be replaced by OQS-derived key in Step 2.
+ * AES-256-GCM. The key MUST be the 32-byte session key derived from the hybrid
+ * post-quantum handshake (pqc_handshake.c). There is intentionally NO hardcoded /
+ * fallback key — a NULL key is a hard error, so the encryption cannot silently run
+ * on anything other than the PQC-derived secret.
  * Output layout: [ 12-byte IV | ciphertext | 16-byte TAG ]
  */
-static unsigned char default_key[32] =
-    "12345678901234567890123456789012";
 
 /*
  * encrypt_data_gcm:
- *   key        - 32-byte AES-256 key (pass NULL to use placeholder)
+ *   key        - 32-byte AES-256 key (the PQC-derived session key; NULL is an error)
  *   plaintext  - input bytes
  *   plain_len  - length of plaintext
  *   output     - caller-allocated buffer (plain_len + GCM_IV_LEN + GCM_TAG_LEN)
@@ -28,7 +29,7 @@ int encrypt_data_gcm(unsigned char *key,
                      unsigned char *output,
                      int           *output_len)
 {
-    if (!key) key = default_key;
+    if (!key) { fprintf(stderr, "[Crypto] refusing to encrypt without a PQC key\n"); return -1; }
 
     unsigned char iv[GCM_IV_LEN];
     if (RAND_bytes(iv, GCM_IV_LEN) != 1) {
@@ -79,7 +80,7 @@ cleanup:
 
 /*
  * decrypt_data_gcm:
- *   key        - 32-byte AES-256 key (pass NULL to use placeholder)
+ *   key        - 32-byte AES-256 key (the PQC-derived session key; NULL is an error)
  *   input      - [ 12-byte IV | ciphertext | 16-byte TAG ]
  *   input_len  - total bytes in input
  *   plaintext  - caller-allocated output buffer
@@ -92,7 +93,7 @@ int decrypt_data_gcm(unsigned char *key,
                      unsigned char *plaintext,
                      int           *plain_len)
 {
-    if (!key) key = default_key;
+    if (!key) { fprintf(stderr, "[Crypto] refusing to decrypt without a PQC key\n"); return -1; }
 
     if (input_len < GCM_IV_LEN + GCM_TAG_LEN) {
         fprintf(stderr, "[Crypto] Input too short\n");

@@ -15,6 +15,11 @@ sctp_receiver: sctp_receiver.c crypto_layer.c pqc_handshake.c multihoming.c net_
 tcp_client: tcp_client.c
 	$(CC) $^ -o $@ $(CFLAGS)
 
+# Standalone proof that real ML-KEM-768 (liboqs / FIPS 203) is in use.
+# liboqs must precede OpenSSL in the link line (it references libcrypto symbols).
+pqc_selftest: pqc_selftest.c
+	$(CC) $^ -o $@ $(CFLAGS) -L/home/danish/liboqs/install/usr/local/lib -loqs -lssl -lcrypto
+
 # ── Unit tests (no liboqs/openssl/sctp needed) ─────────────────────────────
 test: tests/test_policy tests/test_metrics
 	./tests/test_policy
@@ -27,4 +32,4 @@ tests/test_metrics: tests/test_metrics.c metrics.c
 	$(CC) $^ -o $@ $(CFLAGS) -lpthread -lm
 
 clean:
-	rm -f gateway sctp_receiver tcp_client tests/test_policy tests/test_metrics
+	rm -f gateway sctp_receiver tcp_client pqc_selftest tests/test_policy tests/test_metrics

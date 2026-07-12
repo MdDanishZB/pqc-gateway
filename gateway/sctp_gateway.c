@@ -25,6 +25,38 @@ static double mono_ms(void)
     return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
 }
 
+/*
+ * Read the security posture for this session. Live-controllable for the demo:
+ *   1. GW_POSTURE_FILE (default /tmp/gw_posture): two ints "battery high_assurance"
+ *      re-read every session, so the dashboard can change it WITHOUT a restart.
+ *   2. else env GW_BATTERY_PRESSURE / GW_HIGH_ASSURANCE (read at each session too).
+ *   3. else defaults {0, 0}.
+ * crypto_policy.select_kem() enforces the floor regardless — battery can never weaken it.
+ */
+static void read_posture(SecurityPosture *p)
+{
+    p->battery_pressure = 0;
+    p->high_assurance   = 0;
+
+    const char *path = getenv("GW_POSTURE_FILE");
+    if (!path) path = "/tmp/gw_posture";
+
+    FILE *f = fopen(path, "r");
+    if (f) {
+        int b = 0, h = 0;
+        if (fscanf(f, "%d %d", &b, &h) >= 1) {
+            p->battery_pressure = b;
+            p->high_assurance   = h;
+        }
+        fclose(f);
+        return;
+    }
+    const char *bp = getenv("GW_BATTERY_PRESSURE");
+    const char *ha = getenv("GW_HIGH_ASSURANCE");
+    if (bp) p->battery_pressure = atoi(bp);
+    if (ha) p->high_assurance   = atoi(ha);
+}
+
 typedef struct {
     int    session_id;
     char   client_ip[64];
@@ -95,11 +127,14 @@ void *handle_client(void *arg)
     printf("[AI] verdict=%s  ai_rtt=%.3fms\n", ai_response, ai_rtt_ms);
 
     /* ── 3. Crypto strength — floored, DECOUPLED from the verdict ────────── */
-    SecurityPosture posture = { .high_assurance = 0, .battery_pressure = 0 };
+    SecurityPosture posture;
+    read_posture(&posture);
     KyberLevel level = select_kem(&posture);
     const char *kem_str =
         (level == KYBER_1024) ? "ML-KEM-1024" :
         (level == KYBER_768)  ? "ML-KEM-768"  : "ML-KEM-512";
+    printf("[Crypto] battery=%d%% high_assurance=%d -> %s  (floor=ML-KEM-768 enforced)\n",
+           posture.battery_pressure, posture.high_assurance, kem_str);
 
     /* ── 4. ONE multi-homed SCTP association for the whole flow ──────────── */
     double connect_ms = 0.0;
