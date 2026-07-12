@@ -59,3 +59,12 @@ Thumbs.db
 *~
 .idea/
 .vscode/
+
+# ── Demo runtime (run_demo.sh) ────────────────────────────────────────────
+.demo_logs/
+.demo_pids
+ai_module/gateway_capture.csv
+.demo_posture
+gateway/pqc_selftest
+gateway/sctp_client
+gateway/tests/test_metrics

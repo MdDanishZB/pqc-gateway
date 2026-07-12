@@ -15,11 +15,24 @@ SOCKET_PATH = "/tmp/ai_gateway.sock"
 # feature vector the gateway sends (as measured live), tagged with the label of
 # the traffic pattern being generated. Feeds eval_transfer.py to test whether the
 # CIC-trained model transfers to gateway-measured features.
-CAPTURE_CSV   = os.getenv("GW_CAPTURE_CSV")
-CAPTURE_LABEL = os.getenv("GW_CAPTURE_LABEL")
+CAPTURE_CSV        = os.getenv("GW_CAPTURE_CSV")
+CAPTURE_LABEL      = os.getenv("GW_CAPTURE_LABEL")
+CAPTURE_LABEL_FILE = os.getenv("GW_CAPTURE_LABEL_FILE")  # dynamic label (calibrate)
 if CAPTURE_CSV and not os.path.exists(CAPTURE_CSV):
     with open(CAPTURE_CSV, "w") as _f:
         _f.write(",".join(FEATURES) + ",severity\n")
+
+
+def _capture_label():
+    """Current capture label: a live file (if set) overrides the static env label."""
+    if CAPTURE_LABEL_FILE and os.path.exists(CAPTURE_LABEL_FILE):
+        try:
+            v = open(CAPTURE_LABEL_FILE).read().strip()
+            if v:
+                return v
+        except Exception:
+            pass
+    return CAPTURE_LABEL
 
 if os.path.exists(SOCKET_PATH):
     os.remove(SOCKET_PATH)
@@ -50,10 +63,12 @@ while True:
             print(f"[AI] WARNING — feature skew: {'; '.join(warnings)} (clipping)")
             parts = clip(parts)
 
-        # Capture the live feature vector (pre-clip) for transfer validation.
-        if CAPTURE_CSV and CAPTURE_LABEL:
-            with open(CAPTURE_CSV, "a") as _f:
-                _f.write(",".join(f"{x:.4f}" for x in parts) + f",{CAPTURE_LABEL}\n")
+        # Capture the live feature vector (pre-clip) for transfer validation / calibration.
+        if CAPTURE_CSV:
+            _lab = _capture_label()
+            if _lab:
+                with open(CAPTURE_CSV, "a") as _f:
+                    _f.write(",".join(f"{x:.4f}" for x in parts) + f",{_lab}\n")
 
         input_df = pd.DataFrame([parts], columns=FEATURES)
         prediction = model.predict(input_df)

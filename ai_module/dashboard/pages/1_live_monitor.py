@@ -77,17 +77,21 @@ else:
     
     with col_a:
         st.subheader("🛡️ Security State")
-        k_level = latest['kyber_level']
-        if "1024" in k_level:
-            st.error(f"Kyber Level: {k_level}")
-        elif "768" in k_level:
-            st.warning(f"Kyber Level: {k_level}")
+        k_level = str(latest['kyber_level'])
+        # Crypto is FLOORED and decoupled from the threat verdict: >= ML-KEM-768 always.
+        if "512" in k_level:
+            st.error(f"Crypto: {k_level}  ⚠️ below floor")
         else:
-            st.success(f"Kyber Level: {k_level}")
-        
-        decision = latest['ai_decision']
+            st.success(f"Crypto: {k_level}  🔒 floor")
+        st.caption("Floored & decoupled — threat/battery never weaken it")
+
+        decision = str(latest['ai_decision'])
         color = "red" if decision == "HIGH" else "orange" if decision == "MEDIUM" else "green"
         st.markdown(f"**AI Threat Level:** :{color}[{decision}]")
+        # The axis the AI actually drives is TRANSPORT, not crypto.
+        action = ("RATE_LIMIT + ALERT" if decision == "HIGH"
+                  else "MONITOR" if decision == "MEDIUM" else "NORMAL")
+        st.markdown(f"**Transport Action:** `{action}`")
         st.markdown(f"**Active Path:** `{latest['active_path']}`")
     
     with col_b:

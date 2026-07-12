@@ -2,7 +2,10 @@ import streamlit as st
 import pandas as pd
 import graphviz
 import os
+import re
 import sys
+import time
+import plotly.express as px
 
 # Ensure we can import from the project root
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -11,11 +14,86 @@ if project_root not in sys.path:
 
 st.set_page_config(page_title="PQC Handshake - PQC Gateway", layout="wide")
 
+# Real per-handshake data comes from the gateway's [Bench] log line.
+GW_LOG = os.environ.get("GW_LOG", os.path.join(project_root, ".demo_logs", "gateway.log"))
+BENCH_RE = re.compile(
+    r"session=(\d+).*?connect=([\d.]+)ms ai_rtt=([\d.]+)ms handshake=([\d.]+)ms "
+    r"\[x25519_kg=([\d.]+) kem_kg=([\d.]+) kem_decaps=([\d.]+) net=([\d.]+)\] kem=(\S+)")
+
+
+def read_handshakes(path, limit=60):
+    if not os.path.exists(path):
+        return pd.DataFrame()
+    try:
+        with open(path, errors="ignore") as f:
+            lines = f.readlines()[-5000:]
+    except Exception:
+        return pd.DataFrame()
+    rows = []
+    for ln in lines:
+        m = BENCH_RE.search(ln)
+        if m:
+            g = m.groups()
+            rows.append({
+                "session": int(g[0]), "connect": float(g[1]), "ai_rtt": float(g[2]),
+                "handshake": float(g[3]), "x25519_kg": float(g[4]), "kem_kg": float(g[5]),
+                "kem_decaps": float(g[6]), "net": float(g[7]), "kem": g[8],
+            })
+    return pd.DataFrame(rows[-limit:])
+
+
 st.title("🔐 PQC Handshake Visualizer")
 st.markdown("""
-This page explains the **Hybrid Post-Quantum Handshake** used by the gateway to establish secure communication.
-The gateway combines classical Diffie-Hellman (X25519) with a Post-Quantum KEM (Kyber) to ensure long-term security.
+The gateway secures every session with a **hybrid post-quantum handshake** — classical
+**X25519** combined with **ML-KEM (Kyber)** — so an attacker must break *both* to recover the
+key. Below is **live data from the real handshakes happening right now**, followed by how it works.
 """)
+
+# ── LIVE: real handshakes from the gateway ────────────────────────────────
+st.subheader("🔴 Live Handshakes (real gateway data)")
+auto = st.checkbox("Auto-refresh (2s)", value=True)
+hs = read_handshakes(GW_LOG)
+
+if hs.empty:
+    st.info(f"No handshakes captured yet — start the stack and send traffic.\n\n"
+            f"(reading `{GW_LOG}`; set `GW_LOG` if your gateway logs elsewhere)")
+else:
+    latest = hs.iloc[-1]
+    # Median is robust to the occasional stalled connection under heavy load.
+    kem_compute = (hs["kem_kg"] + hs["kem_decaps"]).median()
+    med_hs = hs["handshake"].median()
+    pct = (100 * kem_compute / med_hs) if med_hs > 0 else 0
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Handshakes observed", len(hs))
+    c2.metric("Current KEM", latest["kem"])
+    c3.metric("Median handshake", f"{med_hs:.1f} ms")
+    c4.metric("ML-KEM compute", f"{kem_compute:.2f} ms", f"{pct:.2f}% of handshake")
+
+    comp = pd.DataFrame({
+        "phase": ["X25519 keygen", "ML-KEM keygen", "ML-KEM decaps", "network wait"],
+        "ms": [hs["x25519_kg"].median(), hs["kem_kg"].median(),
+               hs["kem_decaps"].median(), hs["net"].median()],
+        "kind": ["classical", "post-quantum", "post-quantum", "network"],
+    })
+    fig = px.bar(comp, x="ms", y="phase", orientation="h", color="kind", text="ms",
+                 color_discrete_map={"classical": "#4C78A8", "post-quantum": "#54A24B",
+                                     "network": "#BAB0AC"})
+    fig.update_traces(texttemplate="%{text:.3f} ms")
+    fig.update_layout(height=260, margin=dict(l=0, r=0, t=10, b=0),
+                      xaxis_title="avg time per handshake phase (ms)", yaxis_title=None)
+    st.plotly_chart(fig, use_container_width=True, key="pqc_decomp")
+    st.caption("The post-quantum KEM (green) is a **sliver** — the handshake cost is the "
+               "network round-trip, not the crypto. This is the measured refutation of "
+               "\"post-quantum is too heavy\".")
+
+    st.markdown("**Recent handshakes** (most recent first)")
+    st.dataframe(
+        hs[["session", "kem", "handshake", "x25519_kg", "kem_kg", "kem_decaps", "net"]]
+        .tail(10).iloc[::-1].round(3),
+        hide_index=True, use_container_width=True)
+
+st.divider()
 
 # --- 1. THE HYBRID CONCEPT ---
 st.subheader("🛡️ The Hybrid Concept: Best of Both Worlds")
@@ -64,9 +142,10 @@ st.graphviz_chart(dot)
 with st.expander("🔍 Detailed Handshake Steps"):
     st.markdown("""
     1. **Initiator Hello**:
-        - **Kyber Level**: 0, 1, or 2 (512, 768, or 1024) as decided by the AI.
+        - **KEM Level**: fixed at the **ML-KEM-768 floor** by default; raised to 1024 only
+          under explicit high-assurance. The AI does **not** choose this — it drives transport.
         - **X25519 Public Key**: 32 bytes of classical EC key.
-        - **Kyber Public Key**: Varying size (800 - 1568 bytes) based on level.
+        - **ML-KEM Public Key**: Varying size (800 - 1568 bytes) based on level.
     
     2. **Responder Response**:
         - **X25519 Public Key**: Server's 32-byte classical key.
@@ -85,11 +164,13 @@ with st.expander("🔍 Detailed Handshake Steps"):
 st.subheader("📊 Kyber Security Levels")
 
 data = {
-    "Level": ["Kyber-512", "Kyber-768", "Kyber-1024"],
+    "Level": ["ML-KEM-512", "ML-KEM-768", "ML-KEM-1024"],
     "NIST Security Category": ["1 (AES-128 equivalent)", "3 (AES-192 equivalent)", "5 (AES-256 equivalent)"],
     "Public Key Size (Bytes)": [800, 1184, 1568],
     "Ciphertext Size (Bytes)": [768, 1088, 1568],
-    "AI Verdict Trigger": ["LOW", "MEDIUM", "HIGH"]
+    "Role in this gateway": ["Below floor — never used",
+                             "Security FLOOR (default)",
+                             "High-assurance only (raised, never forced down)"]
 }
 df = pd.DataFrame(data)
 st.table(df)
@@ -114,4 +195,11 @@ with col_resp:
 [ MB : Kyber CT   ]
     """, language="text")
 
-st.info("💡 The gateway dynamically switches between these levels based on the real-time AI classification of the network state.")
+st.info("💡 Crypto is **floored at ML-KEM-768** and decoupled from the AI verdict — a "
+        "battery or threat signal can never weaken it; only explicit high-assurance raises "
+        "it to ML-KEM-1024. (The AI drives *transport* decisions, not crypto strength.)")
+
+# ── auto-refresh the live section ─────────────────────────────────────────
+if auto:
+    time.sleep(2)
+    st.rerun()

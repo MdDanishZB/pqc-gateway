@@ -122,6 +122,58 @@ with col_network:
     st.markdown("**Current Interface Config:**")
     st.code(st.session_state.network_cond.get_status(), language="bash")
 
+# --- SECURITY POSTURE & CRYPTO FLOOR (demo Beat 4 — the headline) ---
+st.divider()
+st.subheader("🔒 Security Posture & Crypto Floor")
+st.caption("The AI drives TRANSPORT (failover / rate-limit); it never weakens crypto. A "
+           "battery signal may request cheaper operation but CANNOT push the KEM below the "
+           "ML-KEM-768 floor. High-assurance may only RAISE it.")
+
+POSTURE_FILE = os.environ.get("GW_POSTURE_FILE", "/tmp/gw_posture")
+colp1, colp2, colp3 = st.columns([1.3, 1, 1.4])
+
+with colp1:
+    battery = st.slider("🔋 Battery pressure (%)", 0, 100, 0,
+                        help="Simulate a draining or spoofed battery (downgrade attack)")
+    high_assurance = st.checkbox("🛡️ High-assurance mode (raise to ML-KEM-1024)")
+    if st.button("Apply Posture", type="primary", use_container_width=True):
+        try:
+            with open(POSTURE_FILE, "w") as f:
+                f.write(f"{battery} {1 if high_assurance else 0}\n")
+            st.toast(f"Posture applied: battery={battery}%  high_assurance={high_assurance}")
+        except Exception as e:
+            st.error(f"Could not write posture file {POSTURE_FILE}: {e}")
+
+with colp2:
+    try:
+        cur = open(POSTURE_FILE).read().strip()
+    except Exception:
+        cur = "0 0 (default)"
+    st.metric("Posture (battery high_assurance)", cur)
+
+with colp3:
+    import sqlite3
+    _proot = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    _dbp = os.path.join(_proot, "ai_module", "dashboard", "metrics.db")
+    if not os.path.exists(_dbp):
+        _dbp = os.path.join(_proot, "metrics.db")
+    kem = "—"
+    try:
+        _c = sqlite3.connect(_dbp)
+        _r = _c.execute("SELECT kyber_level FROM metrics ORDER BY timestamp DESC LIMIT 1").fetchone()
+        _c.close()
+        if _r:
+            kem = _r[0]
+    except Exception:
+        pass
+    st.metric("Resulting crypto (live)", kem)
+    if kem == "—":
+        st.info("send traffic → see the negotiated KEM")
+    elif "512" not in str(kem):
+        st.success("✅ FLOOR HELD (≥ ML-KEM-768)")
+    else:
+        st.error("⚠️ floor breached")
+
 # --- FOOTER: QUICK ACTIONS ---
 st.divider()
 st.subheader("🛠️ Quick Actions")
