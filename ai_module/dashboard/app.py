@@ -31,7 +31,16 @@ Use the sidebar to navigate through the different monitoring and control modules
 st.info("👈 Select a page from the sidebar to get started.")
 
 with st.expander("System Status"):
+    import sys, os
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+    try:
+        from llm.llm_config import LLM_BACKEND, OLLAMA_MODEL, GEMINI_MODEL
+        backend = (f"Ollama ({OLLAMA_MODEL})" if LLM_BACKEND == "ollama"
+                   else f"Gemini ({GEMINI_MODEL})" if LLM_BACKEND == "gemini"
+                   else LLM_BACKEND)
+    except Exception:
+        backend = "unknown"
     st.write("**Gateway:** Running")
     st.write("**AI Model Server:** Connected")
-    st.write("**LLM Backend:** Ollama (Llama 3.1)")
+    st.write(f"**LLM Backend:** {backend}  _(explanation only — outside the decision loop)_")
     st.write("**Metrics DB:** Connected")

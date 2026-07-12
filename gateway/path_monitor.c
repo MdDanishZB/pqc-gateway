@@ -1,5 +1,6 @@
 #include "path_monitor.h"
 #include "multihoming.h"
+#include "net_config.h"
 #include "metrics.h"
 #include "transport_policy.h"
 
@@ -57,8 +58,8 @@ static void *monitor_loop(void *arg)
 
         /* ── query both paths ──────────────────────────────────────────── */
         PathStatus primary_ps, secondary_ps;
-        int p_ok = get_path_status(fd, PRIMARY_IP,   5000, &primary_ps);
-        int s_ok = get_path_status(fd, SECONDARY_IP, 5000, &secondary_ps);
+        int p_ok = get_path_status(fd, gw_peer_primary(),   gw_sctp_port(), &primary_ps);
+        int s_ok = get_path_status(fd, gw_peer_secondary(), gw_sctp_port(), &secondary_ps);
 
         if (p_ok < 0) {
             /* fd was closed between safe_fd() and here — that's fine */
@@ -67,21 +68,18 @@ static void *monitor_loop(void *arg)
         }
 
         /* ── build metrics for AI ──────────────────────────────────────── */
-        /* Features MUST match the training schema (see ai_module/features.py).
-         * Previously this sent the SCTP cwnd as "throughput" and an inter-path
-         * RTT spread as "jitter" — both out-of-distribution, which made the
-         * model's verdicts arbitrary. Use the trained semantics instead. */
-        double latency  = (double)primary_ps.rtt_ms;
-        double jitter   = update_jitter(latency);            /* |Δlatency| */
-        double loss_pct = get_packet_loss_pct();
-        double thruput  = get_last_throughput_bytes();       /* payload bytes, not cwnd */
-        double iat_ms   = measure_iat_ms();
-        double bw_util  = get_bandwidth_util_pct();
+        /* Same windowed flow-statistics vector the gateway emits (features.py
+         * schema, microseconds). Reads the shared packet window; does not mutate
+         * the jitter/IAT globals (avoids cross-thread pollution). */
+        double latency  = (double)primary_ps.rtt_ms;   /* for logging only */
+        double loss_pct = get_packet_loss_pct();        /* for logging only */
+        double feats[6];
+        get_window_features(feats);
 
         char metrics_str[256];
         snprintf(metrics_str, sizeof(metrics_str),
                  "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f",
-                 latency, jitter, loss_pct, thruput, iat_ms, bw_util);
+                 feats[0], feats[1], feats[2], feats[3], feats[4], feats[5]);
 
         /* ── query AI ──────────────────────────────────────────────────── */
         char ai_resp[64];
@@ -91,20 +89,20 @@ static void *monitor_loop(void *arg)
         /* ── log current state ─────────────────────────────────────────── */
         printf("\n[Monitor] ── Path Health ───────────────────────────────\n");
         printf("[Monitor]  Primary   (%s): %-12s  RTT=%u ms  cwnd=%u\n",
-               PRIMARY_IP,
+               gw_peer_primary(),
                path_state_str(primary_ps.state),
                primary_ps.rtt_ms, primary_ps.cwnd);
         if (s_ok == 0) {
             printf("[Monitor]  Secondary (%s): %-12s  RTT=%u ms  cwnd=%u\n",
-                   SECONDARY_IP,
+                   gw_peer_secondary(),
                    path_state_str(secondary_ps.state),
                    secondary_ps.rtt_ms, secondary_ps.cwnd);
         } else {
-            printf("[Monitor]  Secondary (%s): unavailable\n", SECONDARY_IP);
+            printf("[Monitor]  Secondary (%s): unavailable\n", gw_peer_secondary());
         }
-        printf("[Monitor]  AI verdict: %s  (latency=%.1fms  jitter=%.1fms"
-               "  loss=%.1f%%)\n",
-               ai_resp, latency, jitter, loss_pct);
+        printf("[Monitor]  AI verdict: %s  (rtt=%.1fms  loss=%.1f%%"
+               "  iat_mean=%.0fus  pkt_rate=%.1f/s)\n",
+               ai_resp, latency, loss_pct, feats[0], feats[2]);
 
         /* ── transport decision (crypto strength is NOT touched here) ───── */
         pthread_mutex_lock(&state_lock);
@@ -122,7 +120,7 @@ static void *monitor_loop(void *arg)
             case TA_FAILOVER:
                 printf("[Monitor] *** PRIMARY PATH DOWN — emergency failover to"
                        " secondary ***\n");
-                switch_primary_path(fd, SECONDARY_IP, 5000);
+                switch_primary_path(fd, gw_peer_secondary(), gw_sctp_port());
                 pthread_mutex_lock(&state_lock);
                 on_secondary = 1;
                 pthread_mutex_unlock(&state_lock);
@@ -135,7 +133,7 @@ static void *monitor_loop(void *arg)
 
             case TA_RESTORE_PRIMARY:
                 printf("[Monitor] *** Threat cleared — restoring primary path ***\n");
-                switch_primary_path(fd, PRIMARY_IP, 5000);
+                switch_primary_path(fd, gw_peer_primary(), gw_sctp_port());
                 pthread_mutex_lock(&state_lock);
                 on_secondary = 0;
                 pthread_mutex_unlock(&state_lock);
@@ -196,7 +194,7 @@ const char *path_monitor_preferred_primary(void)
     pthread_mutex_lock(&state_lock);
     int sec = on_secondary;
     pthread_mutex_unlock(&state_lock);
-    return sec ? SECONDARY_IP : PRIMARY_IP;
+    return sec ? gw_peer_secondary() : gw_peer_primary();
 }
 
 const char *path_monitor_preferred_secondary(void)
@@ -204,5 +202,5 @@ const char *path_monitor_preferred_secondary(void)
     pthread_mutex_lock(&state_lock);
     int sec = on_secondary;
     pthread_mutex_unlock(&state_lock);
-    return sec ? PRIMARY_IP : SECONDARY_IP;
+    return sec ? gw_peer_primary() : gw_peer_secondary();
 }

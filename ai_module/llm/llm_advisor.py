@@ -38,54 +38,50 @@ class LLMAdvisor:
             print(f"Error fetching metrics: {e}")
             return pd.DataFrame()
 
+    @staticmethod
+    def _events_json(df):
+        """Compact, authoritative decision records for grounding the LLM."""
+        cols = [c for c in ("timestamp", "ai_decision", "kyber_level", "active_path",
+                            "latency", "loss", "throughput") if c in df.columns]
+        return json.dumps(df[cols].to_dict(orient="records"), default=str)
+
+    @staticmethod
+    def _dominant_verdict(df):
+        """Echo the RF's own verdict — the LLM never (re)classifies threats."""
+        if "ai_decision" in df.columns and not df["ai_decision"].dropna().empty:
+            return df["ai_decision"].mode().iloc[0]
+        return None
+
     def run(self):
-        print(f"[*] LLM Advisor started. Polling every {ANALYSIS_INTERVAL_SEC}s...")
+        print(f"[*] LLM Advisor started (EXPLANATION only, out of the decision loop). "
+              f"Polling every {ANALYSIS_INTERVAL_SEC}s...")
         while True:
             df = self.get_new_metrics()
             if not df.empty:
-                print(f"[*] Analyzing {len(df)} new metrics...")
-                metrics_str = df.to_string()
-                
-                # We ask the LLM for a structured analysis
-                prompt = (
-                    f"Analyze these PQC Gateway metrics:\n{metrics_str}\n\n"
-                    "Provide a JSON response with these fields:\n"
-                    "metrics_summary (short string),\n"
-                    "threat_level (LOW, MEDIUM, or HIGH),\n"
-                    "attack_type (e.g., None, DDoS, C2),\n"
-                    "confidence (0.0 to 1.0),\n"
-                    "explanation (human readable reasoning),\n"
-                    "recommendation (actionable advice)\n"
-                    "Return ONLY valid JSON."
-                )
-                
-                raw_response = self.analyst.chat(prompt)
-                
+                print(f"[*] Explaining {len(df)} new event(s)...")
+                events = self._events_json(df)
+
+                # The LLM only NARRATES what the system already decided (grounded, refuses
+                # when unsupported). It does not produce a threat classification.
+                explanation = self.analyst.explain_events(events)
+
+                # threat_level is the RF's OWN dominant verdict, echoed — not LLM-derived.
+                verdict = self._dominant_verdict(df)
+                summary = f"{len(df)} events; RF dominant verdict={verdict}"
+
                 try:
-                    # Try to extract JSON from the response (sometimes LLMs wrap it in markdown)
-                    json_str = raw_response
-                    if "```json" in raw_response:
-                        json_str = raw_response.split("```json")[1].split("```")[0].strip()
-                    elif "```" in raw_response:
-                        json_str = raw_response.split("```")[1].split("```")[0].strip()
-                    
-                    analysis = json.loads(json_str)
-                    
-                    # Store in DB
                     conn = sqlite3.connect(DB_PATH)
-                    c = conn.cursor()
-                    c.execute(
-                        "INSERT INTO llm_analysis (metrics_summary, threat_level, attack_type, confidence, explanation, recommendation) VALUES (?, ?, ?, ?, ?, ?)",
-                        (analysis.get('metrics_summary'), analysis.get('threat_level'), analysis.get('attack_type'), 
-                         analysis.get('confidence'), analysis.get('explanation'), analysis.get('recommendation'))
-                    )
+                    conn.execute(
+                        "INSERT INTO llm_analysis (metrics_summary, threat_level, "
+                        "attack_type, confidence, explanation, recommendation) "
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                        (summary, verdict, "n/a (LLM does not classify)", None,
+                         explanation, "See explanation; controls are automatic."))
                     conn.commit()
                     conn.close()
-                    print("[+] Analysis stored in database.")
-                    
+                    print("[+] Grounded explanation stored.")
                 except Exception as e:
-                    print(f"[!] Error parsing LLM response or storing in DB: {e}")
-                    print(f"Raw response was: {raw_response[:200]}...")
+                    print(f"[!] DB store error: {e}")
 
             time.sleep(ANALYSIS_INTERVAL_SEC)
 

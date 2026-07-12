@@ -1,6 +1,7 @@
 #include "metrics.h"
 
 #include <time.h>
+#include <math.h>
 #include <stdio.h>
 #include <pthread.h>
 #include <sys/socket.h>
@@ -151,4 +152,75 @@ double get_last_throughput_bytes(void)
     double v = last_thru_bytes;
     pthread_mutex_unlock(&thru_mtx);
     return v;
+}
+
+/* ── sliding-window flow features (Phase 3 / Workstream B) ──────────────── */
+
+static double now_us(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1e6 + ts.tv_nsec / 1e3;
+}
+
+static pthread_mutex_t win_mtx = PTHREAD_MUTEX_INITIALIZER;
+static double          win_ts[FEATURE_WINDOW];   /* arrival timestamps (us) */
+static int             win_sz[FEATURE_WINDOW];   /* packet sizes (bytes)    */
+static int             win_head  = 0;            /* next write slot         */
+static int             win_count = 0;            /* filled (<= FEATURE_WINDOW) */
+
+void record_packet(int size_bytes)
+{
+    double t = now_us();
+    pthread_mutex_lock(&win_mtx);
+    win_ts[win_head] = t;
+    win_sz[win_head] = size_bytes;
+    win_head = (win_head + 1) % FEATURE_WINDOW;
+    if (win_count < FEATURE_WINDOW) win_count++;
+    pthread_mutex_unlock(&win_mtx);
+}
+
+void get_window_features(double out[6])
+{
+    pthread_mutex_lock(&win_mtx);
+    int n = win_count;
+
+    if (n < 2) {                       /* need >= 2 arrivals for an IAT */
+        pthread_mutex_unlock(&win_mtx);
+        for (int i = 0; i < 6; i++) out[i] = 0.0;
+        return;
+    }
+
+    int    start   = (win_head - n + FEATURE_WINDOW) % FEATURE_WINDOW;  /* oldest */
+    double first_ts = win_ts[start];
+    double last_ts  = win_ts[(win_head - 1 + FEATURE_WINDOW) % FEATURE_WINDOW];
+    double span_us  = last_ts - first_ts;
+
+    double    sum_iat = 0.0, sum_iat2 = 0.0;
+    long long total_bytes = 0;
+    double    prev = first_ts;
+    for (int i = 0; i < n; i++) {
+        int idx = (start + i) % FEATURE_WINDOW;
+        total_bytes += win_sz[idx];
+        if (i > 0) {
+            double gap = win_ts[idx] - prev;
+            sum_iat  += gap;
+            sum_iat2 += gap * gap;
+            prev = win_ts[idx];
+        }
+    }
+    pthread_mutex_unlock(&win_mtx);
+
+    int    gaps     = n - 1;
+    double iat_mean = sum_iat / gaps;
+    double var      = (sum_iat2 / gaps) - (iat_mean * iat_mean);
+    if (var < 0.0) var = 0.0;          /* guard FP round-off */
+    double span_s   = span_us / 1e6;
+
+    out[0] = iat_mean;                                  /* iat_mean      (us)   */
+    out[1] = sqrt(var);                                 /* iat_std       (us)   */
+    out[2] = (span_s > 0.0) ? (double)n / span_s : 0.0; /* pkt_rate      (/s)   */
+    out[3] = (span_s > 0.0) ? (double)total_bytes / span_s : 0.0; /* byte_rate  */
+    out[4] = (double)total_bytes / n;                   /* mean_pkt_size (bytes)*/
+    out[5] = span_us;                                   /* flow_duration (us)   */
 }

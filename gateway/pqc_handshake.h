@@ -43,12 +43,30 @@ typedef enum {
  */
 
 /*
+ * Handshake sub-phase timings (Phase 3 / Workstream D — latency decomposition).
+ * All values in milliseconds. Lets the gateway show that ML-KEM compute is a small
+ * fraction of the session, refuting the old "32% crypto-time reduction" claim.
+ */
+typedef struct {
+    double x25519_keygen_ms;   /* classical keypair generation        */
+    double kem_keygen_ms;      /* ML-KEM object + keypair             */
+    double kem_decaps_ms;      /* ML-KEM decapsulation                */
+    double net_ms;             /* send pubkeys + wait for peer reply  */
+    double total_ms;           /* whole handshake                     */
+} PqcTiming;
+
+/*
  * Initiator side — call after sctp_connectx() succeeds.
  * Writes 32-byte AES key into shared_secret.
  * Returns 0 on success, -1 on failure.
  */
 int pqc_initiator_handshake(int fd, KyberLevel level,
                              uint8_t shared_secret[PQC_SHARED_SECRET_LEN]);
+
+/* Same as above but fills *timing (may be NULL) with sub-phase durations. */
+int pqc_initiator_handshake_timed(int fd, KyberLevel level,
+                                   uint8_t shared_secret[PQC_SHARED_SECRET_LEN],
+                                   PqcTiming *timing);
 
 /*
  * Responder side — call after accept() succeeds.

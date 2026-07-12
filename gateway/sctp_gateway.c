@@ -13,8 +13,17 @@
 #include "crypto_policy.h"
 #include "metrics.h"
 #include "multihoming.h"
+#include "net_config.h"
 #include "path_monitor.h"
 #include "metrics_reporter.h"
+#include "frame.h"
+
+static double mono_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
+}
 
 typedef struct {
     int    session_id;
@@ -34,7 +43,6 @@ int encrypt_data_gcm(unsigned char *key,
 int global_session_id = 1;
 
 #define TCP_PORT    4000
-#define SCTP_PORT   5000
 #define BUFFER_SIZE 1024
 
 /* ── per-connection worker ─────────────────────────────────────────────────── */
@@ -53,7 +61,7 @@ void *handle_client(void *arg)
     session.bytes_transferred = 0;
     strcpy(session.client_ip, "127.0.0.1");
 
-    /* ── 1. Receive TCP data ─────────────────────────────────────────────── */
+    /* ── 1. Read the first message (establishes the flow) ────────────────── */
     char buffer[BUFFER_SIZE];
     memset(buffer, 0, sizeof(buffer));
 
@@ -65,134 +73,109 @@ void *handle_client(void *arg)
     buffer[bytes] = '\0';
     session.bytes_transferred = bytes;
 
-    /* Measure inter-arrival time immediately after recv() returns */
-    double iat_ms = measure_iat_ms();
+    printf("\n========== SESSION %d ==========\n", session.session_id);
+    printf("[Gateway] First TCP payload (%d B): %.*s%s\n",
+           bytes, bytes > 60 ? 60 : bytes, buffer, bytes > 60 ? "..." : "");
 
-    struct tm *tm_info = localtime(&session.start_time);
-    char timebuf[64];
-    strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", tm_info);
-
-    printf("\n========== SESSION INFO ==========\n");
-    printf("Session ID     : %d\n",  session.session_id);
-    printf("Client IP      : %s\n",  session.client_ip);
-    printf("Bytes Received : %d\n",  session.bytes_transferred);
-    printf("Start Time     : %s\n",  timebuf);
-    printf("==================================\n");
-    printf("\n[Gateway] Received TCP Data: %s\n", buffer);
-
-    /* ── 2. Collect real metrics from previous session (bootstrap = 0) ───── */
-    double latency_ms   = get_last_latency_ms();   /* 0.0 on first session */
-    double jitter_ms    = update_jitter(latency_ms);
-    double loss_pct     = get_packet_loss_pct();
-    double throughput   = (double)bytes;
-    double bw_util      = get_bandwidth_util_pct();
-
-    /* Publish this session's payload size so the path monitor reports the same
-     * "throughput" feature the model trained on (instead of an SCTP cwnd). */
+    /* ── 2. AI feature vector (windowed, µs) + verdict (transport/logging) ── */
+    record_packet(bytes);
     record_throughput_bytes(bytes);
-
+    double feats[6];
+    get_window_features(feats);
     char metrics_str[256];
     snprintf(metrics_str, sizeof(metrics_str),
              "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f",
-             latency_ms, jitter_ms, loss_pct, throughput,
-             iat_ms, bw_util);
+             feats[0], feats[1], feats[2], feats[3], feats[4], feats[5]);
 
-    /* ── 3. Query AI → network-threat verdict (drives TRANSPORT, not crypto) ─ */
     char ai_response[64];
     memset(ai_response, 0, sizeof(ai_response));
+    double t_ai0 = mono_ms();
     query_ai(metrics_str, ai_response);
+    double ai_rtt_ms = mono_ms() - t_ai0;
+    printf("[AI] verdict=%s  ai_rtt=%.3fms\n", ai_response, ai_rtt_ms);
 
-    printf("\n[AI] Threat level: %-6s  latency=%.2fms  jitter=%.2fms"
-           "  loss=%.1f%%  iat=%.1fms  bw=%.1f%%\n",
-           ai_response, latency_ms, jitter_ms, loss_pct, iat_ms, bw_util);
-
-    /* ── 3b. Select crypto strength — DECOUPLED from the threat verdict ───── */
-    /* The KEM is pinned at the security floor; only an explicit high-assurance
-     * signal raises it, and battery pressure can never lower it (see crypto_policy). */
+    /* ── 3. Crypto strength — floored, DECOUPLED from the verdict ────────── */
     SecurityPosture posture = { .high_assurance = 0, .battery_pressure = 0 };
     KyberLevel level = select_kem(&posture);
+    const char *kem_str =
+        (level == KYBER_1024) ? "ML-KEM-1024" :
+        (level == KYBER_768)  ? "ML-KEM-768"  : "ML-KEM-512";
 
-    /* ── 4. Open multi-homed SCTP connection using AI-preferred path ────── */
+    /* ── 4. ONE multi-homed SCTP association for the whole flow ──────────── */
     double connect_ms = 0.0;
     int sctp_fd = multihome_client_connect(
                       path_monitor_preferred_primary(),
                       path_monitor_preferred_secondary(),
-                      SCTP_PORT, &connect_ms);
+                      gw_sctp_port(), &connect_ms);
     if (sctp_fd < 0) {
         fprintf(stderr, "[Gateway] SCTP connect failed — dropping session\n");
         record_send_result(0);
         close(tcp_client_fd);
         pthread_exit(NULL);
     }
-
-    /* Enable heartbeat so the SCTP stack probes both paths */
     enable_sctp_heartbeat(sctp_fd, HB_INTERVAL_MS);
+    path_monitor_register(sctp_fd);   /* stays registered for the whole flow */
 
-    /* Register with path monitor for real-time path health checks */
-    path_monitor_register(sctp_fd);
-
-    /* Feed real latency into jitter tracker for the next session */
-    update_jitter(connect_ms);
-    printf("[Metrics] SCTP connect latency: %.3f ms\n", connect_ms);
-
-    /* ── 5. PQC handshake — derives AES-256-GCM session key ─────────────── */
+    /* ── 5. PQC handshake (timed) — derives AES-256-GCM session key ──────── */
     uint8_t shared_secret[PQC_SHARED_SECRET_LEN];
-    if (pqc_initiator_handshake(sctp_fd, level, shared_secret) != 0) {
+    PqcTiming tm;
+    memset(&tm, 0, sizeof(tm));
+    if (pqc_initiator_handshake_timed(sctp_fd, level, shared_secret, &tm) != 0) {
         fprintf(stderr, "[Gateway] PQC handshake failed — dropping session\n");
         record_send_result(0);
+        path_monitor_unregister();
         close(sctp_fd);
         close(tcp_client_fd);
         pthread_exit(NULL);
     }
 
-    /* ── 6. Encrypt with AES-256-GCM using the PQC-derived key ──────────── */
-    unsigned char encrypted[BUFFER_SIZE + 12 + 16];
-    int encrypted_len = 0;
+    /* ── Workstream D: per-session latency decomposition ─────────────────── */
+    printf("[Bench] session=%d connect=%.3fms ai_rtt=%.3fms handshake=%.3fms "
+           "[x25519_kg=%.3f kem_kg=%.3f kem_decaps=%.3f net=%.3f] kem=%s\n",
+           session.session_id, connect_ms, ai_rtt_ms, tm.total_ms,
+           tm.x25519_keygen_ms, tm.kem_keygen_ms, tm.kem_decaps_ms,
+           tm.net_ms, kem_str);
 
-    if (encrypt_data_gcm(shared_secret,
-                         (unsigned char *)buffer,
-                         bytes,
-                         encrypted,
-                         &encrypted_len) != 0) {
-        fprintf(stderr, "[Gateway] Encryption failed\n");
-        record_send_result(0);
-        close(sctp_fd);
-        close(tcp_client_fd);
-        pthread_exit(NULL);
+    /* ── 6. STREAM: relay every message over the SAME association ─────────── */
+    /* Keeps the association (and the path monitor) alive so autonomous failover
+     * can actually be exercised while traffic flows (Phase 3 / Workstream C). */
+    int  msg_count   = 0;
+    long total_bytes = 0;
+    while (1) {
+        unsigned char encrypted[BUFFER_SIZE + 12 + 16];
+        int enc_len = 0;
+        if (encrypt_data_gcm(shared_secret, (unsigned char *)buffer, bytes,
+                             encrypted, &enc_len) == 0
+            && frame_write(sctp_fd, encrypted, (uint32_t)enc_len) == 0) {
+            record_send_result(1);
+            msg_count++;
+            total_bytes += bytes;
+        } else {
+            record_send_result(0);   /* send failed even after failover */
+            break;
+        }
+
+        bytes = recv(tcp_client_fd, buffer, sizeof(buffer) - 1, 0);
+        if (bytes <= 0) break;       /* client closed the stream */
+        buffer[bytes] = '\0';
+        record_packet(bytes);
+        record_throughput_bytes(bytes);
     }
 
-    /* ── 7. Forward payload & record outcome ─────────────────────────────── */
-    int sent = (int)send(sctp_fd, encrypted, encrypted_len, 0);
-    record_send_result(sent > 0);
-
-    clock_gettime(CLOCK_MONOTONIC, &wall_end);
-    double wall_ms = (wall_end.tv_sec  - wall_start.tv_sec)  * 1000.0
-                   + (wall_end.tv_nsec - wall_start.tv_nsec) / 1e6;
-
-    update_bandwidth_ema(bytes, wall_ms > 0 ? wall_ms : 1.0);
-
-    if (sent > 0) {
-        printf("[Gateway] AES-256-GCM payload forwarded (%d bytes)\n",
-               encrypted_len);
-    } else {
-        perror("Send failed");
-    }
-
+    /* ── 7. Teardown + report ────────────────────────────────────────────── */
     path_monitor_unregister();
     close(sctp_fd);
     close(tcp_client_fd);
 
-    double throughput_bps = bytes / (wall_ms / 1000.0);
+    clock_gettime(CLOCK_MONOTONIC, &wall_end);
+    double wall_ms = (wall_end.tv_sec  - wall_start.tv_sec)  * 1000.0
+                   + (wall_end.tv_nsec - wall_start.tv_nsec) / 1e6;
+    double throughput_bps = (wall_ms > 0) ? total_bytes / (wall_ms / 1000.0) : 0.0;
     double final_loss_pct = get_packet_loss_pct();
+    update_bandwidth_ema((int)total_bytes, wall_ms > 0 ? wall_ms : 1.0);
 
-    printf("[Metrics] Total processing  : %.3f ms\n", wall_ms);
-    printf("[Metrics] Throughput        : %.2f bytes/sec\n", throughput_bps);
-    printf("[Metrics] Rolling loss      : %.1f%%\n", final_loss_pct);
-
-    /* Report the ACTUAL negotiated KEM level (decoupled from the threat verdict) */
-    const char *kyber_str =
-        (level == KYBER_1024) ? "ML-KEM-1024" :
-        (level == KYBER_768)  ? "ML-KEM-768"  : "ML-KEM-512";
+    printf("[Gateway] flow done: %d messages, %ld bytes, %.1f ms, %.0f B/s\n",
+           msg_count, total_bytes, wall_ms, throughput_bps);
 
     report_session_metrics(
         session.session_id,
@@ -201,9 +184,9 @@ void *handle_client(void *arg)
         final_loss_pct,
         throughput_bps,
         ai_response,
-        kyber_str,
+        kem_str,
         path_monitor_preferred_primary(),
-        bytes,
+        (int)total_bytes,
         wall_ms);
 
     return NULL;

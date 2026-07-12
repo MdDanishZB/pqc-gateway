@@ -8,6 +8,8 @@
 
 #include "pqc_handshake.h"
 #include "multihoming.h"
+#include "net_config.h"
+#include "frame.h"
 
 #define BUFFER_SIZE 2048   /* large enough for IV + payload + TAG */
 
@@ -19,8 +21,11 @@ int decrypt_data_gcm(unsigned char *key,
 
 int main(void)
 {
-    /* Bind to both loopback IPs so the SCTP association spans both paths */
-    int server_fd = multihome_server_create(PRIMARY_IP, SECONDARY_IP, 5000);
+    /* Bind to both local IPs so the SCTP association spans both paths.
+     * Addresses/port are env-configurable (net_config); default = loopback pair. */
+    int server_fd = multihome_server_create(gw_local_primary(),
+                                            gw_local_secondary(),
+                                            gw_sctp_port());
     if (server_fd < 0) exit(1);
 
     printf("SCTP Receiver ready (multi-homed).\n");
@@ -42,24 +47,26 @@ int main(void)
             continue;
         }
 
-        /* ── Receive encrypted payload ─────────────────────────────────── */
+        /* ── Receive framed encrypted messages until the peer closes ────── */
+        /* Streaming relay (Phase 3 / Workstream C): one association carries many
+         * length-prefixed messages, so we loop instead of a single recv(). */
         unsigned char buffer[BUFFER_SIZE];
-        memset(buffer, 0, sizeof(buffer));
-
-        int bytes = recv(client_fd, buffer, sizeof(buffer), 0);
-        if (bytes > 0) {
+        uint32_t flen;
+        int count = 0;
+        while (frame_read(client_fd, buffer, sizeof(buffer), &flen) == 0) {
             unsigned char plaintext[BUFFER_SIZE];
             int plain_len = 0;
-
-            if (decrypt_data_gcm(shared_secret, buffer, bytes,
+            if (decrypt_data_gcm(shared_secret, buffer, (int)flen,
                                   plaintext, &plain_len) == 0) {
-                printf("[Receiver] Decrypted message (%d bytes): %s\n",
-                       plain_len, plaintext);
+                int t = (plain_len < (int)sizeof(plaintext)) ? plain_len
+                                                             : (int)sizeof(plaintext) - 1;
+                plaintext[t] = '\0';
+                printf("[Receiver] msg %d (%d B): %s\n", ++count, plain_len, plaintext);
             } else {
                 printf("[Receiver] Decryption / auth-tag check FAILED\n");
             }
         }
-
+        printf("[Receiver] flow closed after %d message(s)\n", count);
         close(client_fd);
     }
 

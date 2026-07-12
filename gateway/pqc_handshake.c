@@ -9,6 +9,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
+
+static double mono_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
+}
 
 /* ── constants ──────────────────────────────────────────────────────────── */
 
@@ -165,12 +173,17 @@ cleanup:
 
 /* ── initiator ──────────────────────────────────────────────────────────── */
 
-int pqc_initiator_handshake(int fd, KyberLevel level,
-                             uint8_t shared_secret[PQC_SHARED_SECRET_LEN])
+int pqc_initiator_handshake_timed(int fd, KyberLevel level,
+                                   uint8_t shared_secret[PQC_SHARED_SECRET_LEN],
+                                   PqcTiming *timing)
 {
+    double t_x25519 = 0.0, t_kemkg = 0.0, t_net = 0.0, t_decaps = 0.0;
+    double t_start = mono_ms(), a;
+
     printf("[PQC] Hybrid handshake — initiator — %s\n", level_to_name(level));
 
     /* ── X25519 keygen ─────────────────────────────────────────────────── */
+    a = mono_ms();
     EVP_PKEY *ecdh_key = ecdh_keygen();
     if (!ecdh_key) { fprintf(stderr, "[PQC] X25519 keygen failed\n"); return -1; }
 
@@ -179,9 +192,11 @@ int pqc_initiator_handshake(int fd, KyberLevel level,
         EVP_PKEY_free(ecdh_key);
         return -1;
     }
+    t_x25519 = mono_ms() - a;
 
     /* ── Kyber keygen ──────────────────────────────────────────────────── */
     const char *alg = level_to_alg(level);
+    a = mono_ms();
     OQS_KEM *kem = OQS_KEM_new(alg);
     if (!kem) { EVP_PKEY_free(ecdh_key); return -1; }
 
@@ -196,8 +211,10 @@ int pqc_initiator_handshake(int fd, KyberLevel level,
         fprintf(stderr, "[PQC] Kyber keypair failed\n");
         goto cleanup;
     }
+    t_kemkg = mono_ms() - a;
 
-    /* ── Send: [1-byte level][X25519 pub][Kyber pub] ───────────────────── */
+    /* ── Send: [1-byte level][X25519 pub][Kyber pub], then wait for reply ─ */
+    a = mono_ms();
     uint8_t hdr = (uint8_t)level;
     if (write_exact(fd, &hdr,      1)                      != 0) goto cleanup;
     if (write_exact(fd, ecdh_pub,  ECDH_KEY_LEN)           != 0) goto cleanup;
@@ -210,6 +227,7 @@ int pqc_initiator_handshake(int fd, KyberLevel level,
     uint8_t peer_ecdh_pub[ECDH_KEY_LEN];
     if (read_exact(fd, peer_ecdh_pub, ECDH_KEY_LEN)        != 0) goto cleanup;
     if (read_exact(fd, kyber_ct, kem->length_ciphertext)   != 0) goto cleanup;
+    t_net = mono_ms() - a;
 
     printf("[PQC] ← Received X25519 pubkey (32 B) + Kyber ciphertext (%zu B)\n",
            kem->length_ciphertext);
@@ -221,12 +239,14 @@ int pqc_initiator_handshake(int fd, KyberLevel level,
         goto cleanup;
     }
 
+    a = mono_ms();
     uint8_t kyber_secret[PQC_SHARED_SECRET_LEN];
     if (OQS_KEM_decaps(kem, kyber_secret, kyber_ct, kyber_sec) != OQS_SUCCESS) {
         fprintf(stderr, "[PQC] Kyber decapsulation failed\n");
         memset(ecdh_secret, 0, sizeof(ecdh_secret));
         goto cleanup;
     }
+    t_decaps = mono_ms() - a;
 
     /* ── HKDF: combine both secrets → session key ──────────────────────── */
     if (hkdf_derive(ecdh_secret, kyber_secret, shared_secret) != 0) {
@@ -249,7 +269,20 @@ cleanup:
     free(kyber_ct);
     OQS_KEM_free(kem);
     EVP_PKEY_free(ecdh_key);
+    if (timing) {
+        timing->x25519_keygen_ms = t_x25519;
+        timing->kem_keygen_ms    = t_kemkg;
+        timing->kem_decaps_ms    = t_decaps;
+        timing->net_ms           = t_net;
+        timing->total_ms         = mono_ms() - t_start;
+    }
     return ret;
+}
+
+int pqc_initiator_handshake(int fd, KyberLevel level,
+                             uint8_t shared_secret[PQC_SHARED_SECRET_LEN])
+{
+    return pqc_initiator_handshake_timed(fd, level, shared_secret, NULL);
 }
 
 /* ── responder ──────────────────────────────────────────────────────────── */

@@ -60,4 +60,27 @@ double get_bandwidth_util_pct(void);
 void   record_throughput_bytes(int bytes);
 double get_last_throughput_bytes(void);
 
+/*
+ * ── Phase 3 / Workstream B: sliding-window flow features ──────────────────
+ *
+ * The Phase-2 model is trained on CIC-IDS2017 flow statistics. record_packet()
+ * feeds every received packet (size in bytes) into a mutex-guarded ring buffer of
+ * recent arrivals; get_window_features() computes the 6 features the model expects,
+ * in features.py order and UNITS:
+ *
+ *   out[0] iat_mean       mean inter-arrival gap        microseconds (us)
+ *   out[1] iat_std        std of inter-arrival gaps     microseconds (us)
+ *   out[2] pkt_rate       packets / second
+ *   out[3] byte_rate      bytes / second
+ *   out[4] mean_pkt_size  mean packet size              bytes
+ *   out[5] flow_duration  window span (last - first)    microseconds (us)
+ *
+ * NOTE (units): CIC times are microseconds; emit us here (NOT ms) or the model
+ * sees a 1000x train/serve skew. Thread-safe. Returns all zeros before 2 packets.
+ */
+#define FEATURE_WINDOW 256   /* ring buffer depth (recent arrivals) */
+
+void record_packet(int size_bytes);
+void get_window_features(double out[6]);
+
 #endif /* METRICS_H */

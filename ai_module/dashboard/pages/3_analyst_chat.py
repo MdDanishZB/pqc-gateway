@@ -29,11 +29,24 @@ if not os.path.exists(DB_PATH):
     DB_PATH = os.path.join(project_root, "metrics.db")
 
 def get_latest_metrics(limit=10):
+    """Return recent decision records as compact JSON — the grounding for the analyst.
+    (Structured events, not a raw table dump, so the LLM explains rather than hallucinates.)"""
+    import json
     try:
         conn = sqlite3.connect(DB_PATH)
-        df = pd.read_sql_query(f"SELECT * FROM metrics ORDER BY timestamp DESC LIMIT {limit}", conn)
+        cols = "timestamp, ai_decision, kyber_level, active_path, latency, loss, throughput"
+        df = pd.read_sql_query(
+            f"SELECT {cols} FROM metrics ORDER BY timestamp DESC LIMIT {limit}", conn)
+        events = df.to_dict(orient="records")
+        try:
+            pe = pd.read_sql_query(
+                "SELECT timestamp, from_path, to_path, reason FROM path_events "
+                "ORDER BY timestamp DESC LIMIT 5", conn)
+            path_events = pe.to_dict(orient="records")
+        except Exception:
+            path_events = []
         conn.close()
-        return df.to_string()
+        return json.dumps({"metrics": events, "path_events": path_events}, default=str)
     except Exception:
         return "No metrics available."
 
@@ -62,7 +75,7 @@ if submit_button and user_input:
     
     # 3. Get analyst response
     with st.spinner("Analyst is thinking..."):
-        response = st.session_state.analyst.chat(user_input, context_data=context)
+        response = st.session_state.analyst.chat(user_input, events=context)
     
     # 4. Save analyst response
     st.session_state.chat_history.append({'role': 'analyst', 'text': response})
@@ -84,7 +97,7 @@ for query in example_queries:
         st.session_state.chat_history.append({'role': 'user', 'text': query})
         context = get_latest_metrics()
         with st.spinner("Analyst is thinking..."):
-            response = st.session_state.analyst.chat(query, context_data=context)
+            response = st.session_state.analyst.chat(query, events=context)
         st.session_state.chat_history.append({'role': 'analyst', 'text': response})
         st.rerun()
 
