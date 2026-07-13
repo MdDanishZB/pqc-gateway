@@ -83,7 +83,8 @@ else:
             st.error(f"Crypto: {k_level}  ⚠️ below floor")
         else:
             st.success(f"Crypto: {k_level}  🔒 floor")
-        st.caption("Floored & decoupled — threat/battery never weaken it")
+        st.caption("Set ONLY by data classification (Simulation Control) — floored at "
+                   "ML-KEM-768; network/threat/battery never touch it")
 
         decision = str(latest['ai_decision'])
         color = "red" if decision == "HIGH" else "orange" if decision == "MEDIUM" else "green"

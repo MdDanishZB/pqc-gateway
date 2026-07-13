@@ -1,5 +1,6 @@
 #include "transport_policy.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 TransportAction decide_transport(const char *verdict,
@@ -37,4 +38,33 @@ const char *transport_action_str(TransportAction a)
         case TA_ALERT:           return "ALERT";
         default:                 return "UNKNOWN";
     }
+}
+
+/* ── Network-condition (ML-A) → transport recommendation ─────────────────────── */
+
+NetTransportPolicy netstate_to_policy(const char *state)
+{
+    if (!state)                                          return NP_NORMAL;
+    if (strcmp(state, "POSSIBLE_PATH_FAILURE") == 0)     return NP_FAILOVER;
+    if (strcmp(state, "UNSTABLE") == 0)                  return NP_PREFER_BACKUP;
+    if (strcmp(state, "DEGRADED") == 0)                  return NP_FAILOVER_READY;
+    if (strcmp(state, "CONGESTED") == 0)                 return NP_CONGESTION_RESPONSE;
+    return NP_NORMAL;   /* STABLE / unknown */
+}
+
+const char *net_policy_str(NetTransportPolicy p)
+{
+    switch (p) {
+        case NP_CONGESTION_RESPONSE: return "CONGESTION_RESPONSE";
+        case NP_FAILOVER_READY:      return "FAILOVER_READY";
+        case NP_PREFER_BACKUP:       return "PREFER_BACKUP";
+        case NP_FAILOVER:            return "FAILOVER";
+        default:                     return "NORMAL";
+    }
+}
+
+int net_policy_enforced(void)
+{
+    const char *e = getenv("GW_TRANSPORT_ENFORCE");
+    return (e && atoi(e) != 0) ? 1 : 0;
 }

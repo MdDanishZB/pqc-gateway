@@ -11,6 +11,15 @@ typedef enum {
 } KyberLevel;
 
 /*
+ * FIPS 203 standardized names (ML-KEM) — aliases of the enum above, preferred in new
+ * code. "Kyber" is the pre-standardization name kept only for the liboqs API symbols.
+ */
+typedef KyberLevel MlKemLevel;
+#define ML_KEM_512  KYBER_512
+#define ML_KEM_768  KYBER_768
+#define ML_KEM_1024 KYBER_1024
+
+/*
  * Final AES-256-GCM session key length (bytes).
  * Derived via HKDF-SHA256 over both classical and PQC secrets.
  */
@@ -27,6 +36,14 @@ typedef enum {
  * Responder → Initiator:
  *   [32 bytes: X25519 public key]
  *   [M bytes : Kyber ciphertext]   (M = 768 / 1088 / 1568 for 512/768/1024)
+ *
+ * Authentication (ML-DSA-65 / FIPS 204) — appended to each flight:
+ *   [4 bytes : big-endian signature length L][L bytes : ML-DSA signature]
+ *   Initiator signs T_i  = level ‖ X25519_pub ‖ Kyber_pub.
+ *   Responder signs T_r  = T_i ‖ resp_X25519_pub ‖ Kyber_ct.
+ *   Each side verifies the peer's signature against its PINNED public key; a
+ *   verification failure (or a missing signature when auth is required) ABORTS the
+ *   handshake — this is what defeats a man-in-the-middle. L = 0 means unauthenticated.
  *
  * Key derivation (both sides):
  *   ikm      = ecdh_shared_secret (32 B) ‖ kyber_shared_secret (32 B)
@@ -51,6 +68,7 @@ typedef struct {
     double x25519_keygen_ms;   /* classical keypair generation        */
     double kem_keygen_ms;      /* ML-KEM object + keypair             */
     double kem_decaps_ms;      /* ML-KEM decapsulation                */
+    double auth_ms;            /* ML-DSA sign + verify                */
     double net_ms;             /* send pubkeys + wait for peer reply  */
     double total_ms;           /* whole handshake                     */
 } PqcTiming;

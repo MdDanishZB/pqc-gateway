@@ -26,35 +26,47 @@ static double mono_ms(void)
 }
 
 /*
- * Read the security posture for this session. Live-controllable for the demo:
- *   1. GW_POSTURE_FILE (default /tmp/gw_posture): two ints "battery high_assurance"
+ * Read this session's DATA CLASSIFICATION — the ONLY input to crypto strength. It is a
+ * policy attribute of the channel (set per device/port by an operator), never derived
+ * from traffic or any ML model. Live-controllable for the demo:
+ *   1. GW_DATA_CLASS_FILE (default /tmp/gw_dataclass): one token routine|sensitive|critical
  *      re-read every session, so the dashboard can change it WITHOUT a restart.
- *   2. else env GW_BATTERY_PRESSURE / GW_HIGH_ASSURANCE (read at each session too).
- *   3. else defaults {0, 0}.
- * crypto_policy.select_kem() enforces the floor regardless — battery can never weaken it.
+ *   2. else env GW_DATA_CLASS (read each session too).
+ *   3. else default ROUTINE.
+ * crypto_policy.select_kem() maps CRITICAL -> ML-KEM-1024, everything else -> the floor.
  */
-static void read_posture(SecurityPosture *p)
+static DataClassification read_data_class(void)
 {
-    p->battery_pressure = 0;
-    p->high_assurance   = 0;
-
-    const char *path = getenv("GW_POSTURE_FILE");
-    if (!path) path = "/tmp/gw_posture";
+    const char *path = getenv("GW_DATA_CLASS_FILE");
+    if (!path) path = "/tmp/gw_dataclass";
 
     FILE *f = fopen(path, "r");
     if (f) {
-        int b = 0, h = 0;
-        if (fscanf(f, "%d %d", &b, &h) >= 1) {
-            p->battery_pressure = b;
-            p->high_assurance   = h;
-        }
+        char tok[32] = {0};
+        int got = fscanf(f, "%31s", tok);
         fclose(f);
-        return;
+        if (got == 1) return data_class_from_str(tok);
     }
-    const char *bp = getenv("GW_BATTERY_PRESSURE");
-    const char *ha = getenv("GW_HIGH_ASSURANCE");
-    if (bp) p->battery_pressure = atoi(bp);
-    if (ha) p->high_assurance   = atoi(ha);
+    return data_class_from_str(getenv("GW_DATA_CLASS"));
+}
+
+/*
+ * Consume an external "reset path preference" request before starting a new session.
+ * The monitor's failover stickiness (see path_monitor.h) is intentional in normal
+ * operation; this file is an explicit operator/test escape hatch that forgets it and
+ * goes back to preferring the configured primary. Checked once per new session; the
+ * file is removed after being consumed so it fires exactly once per write.
+ */
+static void maybe_reset_path_preference(void)
+{
+    const char *path = getenv("GW_PATH_RESET_FILE");
+    if (!path) path = "/tmp/gw_path_reset";
+
+    if (access(path, F_OK) == 0) {
+        path_monitor_reset_preference();
+        remove(path);
+        printf("[Monitor] path preference reset to configured primary (external request)\n");
+    }
 }
 
 typedef struct {
@@ -126,17 +138,15 @@ void *handle_client(void *arg)
     double ai_rtt_ms = mono_ms() - t_ai0;
     printf("[AI] verdict=%s  ai_rtt=%.3fms\n", ai_response, ai_rtt_ms);
 
-    /* ── 3. Crypto strength — floored, DECOUPLED from the verdict ────────── */
-    SecurityPosture posture;
-    read_posture(&posture);
-    KyberLevel level = select_kem(&posture);
-    const char *kem_str =
-        (level == KYBER_1024) ? "ML-KEM-1024" :
-        (level == KYBER_768)  ? "ML-KEM-768"  : "ML-KEM-512";
-    printf("[Crypto] battery=%d%% high_assurance=%d -> %s  (floor=ML-KEM-768 enforced)\n",
-           posture.battery_pressure, posture.high_assurance, kem_str);
+    /* ── 3. Crypto strength — driven ONLY by data classification, floored ──── */
+    DataClassification data_class = read_data_class();
+    MlKemLevel level = select_kem(data_class);
+    const char *kem_str = ml_kem_name(level);
+    printf("[Policy] data-class=%s -> %s  (floor=ML-KEM-768; network/threat/battery ignored)\n",
+           data_class_name(data_class), kem_str);
 
     /* ── 4. ONE multi-homed SCTP association for the whole flow ──────────── */
+    maybe_reset_path_preference();
     double connect_ms = 0.0;
     int sctp_fd = multihome_client_connect(
                       path_monitor_preferred_primary(),

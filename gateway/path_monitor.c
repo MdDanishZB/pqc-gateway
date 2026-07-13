@@ -9,10 +9,12 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
+#include <math.h>
 #include <pthread.h>
 
-/* ── external: ai query (defined in ai_bridge.c) ───────────────────────── */
-void query_ai(char *metrics, char *response);
+/* ── external: ai queries (defined in ai_bridge.c) ─────────────────────── */
+void query_ai(char *metrics, char *response);       /* ML-B threat  */
+void query_netcond(char *metrics, char *response);  /* ML-A network-condition */
 
 /* ── shared state ───────────────────────────────────────────────────────── */
 
@@ -81,10 +83,26 @@ static void *monitor_loop(void *arg)
                  "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f",
                  feats[0], feats[1], feats[2], feats[3], feats[4], feats[5]);
 
-        /* ── query AI ──────────────────────────────────────────────────── */
+        /* ── query AI: ML-B threat (flow-stats) ────────────────────────── */
         char ai_resp[64];
         memset(ai_resp, 0, sizeof(ai_resp));
         query_ai(metrics_str, ai_resp);
+
+        /* ── query AI: ML-A network-condition (path-health signals) ─────── */
+        static double prev_rtt = -1.0;
+        double rtt        = (double)primary_ps.rtt_ms;
+        double jitter     = (prev_rtt < 0) ? 0.0 : fabs(rtt - prev_rtt);
+        prev_rtt = rtt;
+        double thr_kbps   = get_last_throughput_bytes() * 8.0 / 1000.0;
+        char net_metrics[128];
+        snprintf(net_metrics, sizeof(net_metrics), "%.1f,%.1f,%.2f,%.1f,%u",
+                 rtt, jitter, loss_pct, thr_kbps, primary_ps.cwnd);
+
+        char net_resp[64];
+        memset(net_resp, 0, sizeof(net_resp));
+        query_netcond(net_metrics, net_resp);
+        NetTransportPolicy net_policy =
+            netstate_to_policy(net_resp[0] ? net_resp : "STABLE");
 
         /* ── log current state ─────────────────────────────────────────── */
         printf("\n[Monitor] ── Path Health ───────────────────────────────\n");
@@ -109,10 +127,21 @@ static void *monitor_loop(void *arg)
         int currently_secondary = on_secondary;
         pthread_mutex_unlock(&state_lock);
 
+        /*
+         * "down" = PATH_INACTIVE OR PATH_UNKNOWN. The Linux SCTP stack reports an
+         * unmapped/default state (e.g. RFC 7829 Potentially-Failed) while a cut link is
+         * still working through its retransmit backoff, well before it reaches the
+         * formal INACTIVE state — waiting for INACTIVE alone means failover only fires
+         * after the full RTO backoff (tens of seconds). PATH_UNCONFIRMED is excluded: it
+         * is a normal transient state before the first heartbeat, not a failure signal.
+         */
+        int primary_down = (primary_ps.state == PATH_INACTIVE ||
+                            primary_ps.state == PATH_UNKNOWN);
+
         TransportAction action = decide_transport(
             ai_resp,
             primary_ps.state == PATH_ACTIVE,    /* primary_active      */
-            primary_ps.state == PATH_INACTIVE,  /* primary_down        */
+            primary_down,
             s_ok == 0,                          /* secondary_available */
             currently_secondary);
 
@@ -146,6 +175,30 @@ static void *monitor_loop(void *arg)
             case TA_NORMAL:
             default:
                 break;
+        }
+
+        /* ── ML-A network-condition → transport recommendation (2nd driver) ─── */
+        int enforced = net_policy_enforced();
+        printf("[NetML] state=%s -> transport: %s  [%s]\n",
+               net_resp[0] ? net_resp : "STABLE",
+               net_policy_str(net_policy),
+               enforced ? "ENFORCED"
+                        : "recommendation — single-path, not enforced");
+
+        /* Only when real multihoming is wired (GW_TRANSPORT_ENFORCE=1) does a predicted
+         * path failure proactively fail over. Otherwise ML-A stays purely advisory. */
+        if (enforced) {
+            pthread_mutex_lock(&state_lock);
+            int on_sec = on_secondary;
+            pthread_mutex_unlock(&state_lock);
+            if (!on_sec && s_ok == 0 &&
+                (net_policy == NP_FAILOVER || net_policy == NP_PREFER_BACKUP)) {
+                printf("[NetML] *** proactive failover on predicted path failure ***\n");
+                switch_primary_path(fd, gw_peer_secondary(), gw_sctp_port());
+                pthread_mutex_lock(&state_lock);
+                on_secondary = 1;
+                pthread_mutex_unlock(&state_lock);
+            }
         }
 
         printf("[Monitor] ────────────────────────────────────────────────\n");
@@ -203,4 +256,11 @@ const char *path_monitor_preferred_secondary(void)
     int sec = on_secondary;
     pthread_mutex_unlock(&state_lock);
     return sec ? gw_peer_primary() : gw_peer_secondary();
+}
+
+void path_monitor_reset_preference(void)
+{
+    pthread_mutex_lock(&state_lock);
+    on_secondary = 0;
+    pthread_mutex_unlock(&state_lock);
 }

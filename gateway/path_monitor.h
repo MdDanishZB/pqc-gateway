@@ -38,4 +38,13 @@ const char *path_monitor_preferred_primary(void);
 /* Returns the IP for the secondary slot (opposite of preferred primary). */
 const char *path_monitor_preferred_secondary(void);
 
+/*
+ * Forget any failover memory and go back to preferring the CONFIGURED primary
+ * (gw_peer_primary()) for the next connection. The monitor's stickiness (see the
+ * lifecycle note above) is intentional in normal operation — a path that just failed
+ * shouldn't be retried blindly. This is an explicit escape hatch for operators/tests
+ * that need a deterministic fresh start (e.g. repeated failover measurement trials).
+ */
+void path_monitor_reset_preference(void);
+
 #endif /* PATH_MONITOR_H */

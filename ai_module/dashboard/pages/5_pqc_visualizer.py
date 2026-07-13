@@ -142,19 +142,22 @@ st.graphviz_chart(dot)
 with st.expander("🔍 Detailed Handshake Steps"):
     st.markdown("""
     1. **Initiator Hello**:
-        - **KEM Level**: fixed at the **ML-KEM-768 floor** by default; raised to 1024 only
-          under explicit high-assurance. The AI does **not** choose this — it drives transport.
+        - **KEM Level**: set by the session's **data classification** — ML-KEM-768 floor by
+          default, ML-KEM-1024 only for CRITICAL data. The AI does **not** choose this.
         - **X25519 Public Key**: 32 bytes of classical EC key.
         - **ML-KEM Public Key**: Varying size (800 - 1568 bytes) based on level.
-    
+        - **ML-DSA signature**: the initiator signs the transcript with its pinned identity.
+
     2. **Responder Response**:
         - **X25519 Public Key**: Server's 32-byte classical key.
         - **Kyber Ciphertext**: The encapsulated PQC secret (768 - 1568 bytes).
-    
+        - **ML-DSA signature**: the responder signs the full transcript; each side verifies
+          the other against a pinned key, so a man-in-the-middle is rejected.
+
     3. **Key Derivation (IKM)**:
         - Both sides compute their respective classical shared secret and PQC shared secret.
         - These are concatenated: `IKM = ECDH_Shared || Kyber_Shared`.
-    
+
     4. **Session Key generation**:
         - An AES-256-GCM key is derived using HKDF-SHA256:
         - `Key = HKDF(IKM, salt="pqc-gw", info="session-key", len=32)`
@@ -169,8 +172,8 @@ data = {
     "Public Key Size (Bytes)": [800, 1184, 1568],
     "Ciphertext Size (Bytes)": [768, 1088, 1568],
     "Role in this gateway": ["Below floor — never used",
-                             "Security FLOOR (default)",
-                             "High-assurance only (raised, never forced down)"]
+                             "Security FLOOR (ROUTINE / SENSITIVE data)",
+                             "CRITICAL data only (raised, never forced down)"]
 }
 df = pd.DataFrame(data)
 st.table(df)
@@ -186,6 +189,8 @@ with col_init:
 [ 1B : Level ]
 [ 32B: X25519 Pub ]
 [ NB : Kyber Pub  ]
+[ 4B : sig length ]
+[ LB : ML-DSA sig ]  (over level‖X25519 Pub‖Kyber Pub)
     """, language="text")
 
 with col_resp:
@@ -193,11 +198,15 @@ with col_resp:
     st.code("""
 [ 32B: X25519 Pub ]
 [ MB : Kyber CT   ]
+[ 4B : sig length ]
+[ LB : ML-DSA sig ]  (over the full transcript)
     """, language="text")
 
-st.info("💡 Crypto is **floored at ML-KEM-768** and decoupled from the AI verdict — a "
-        "battery or threat signal can never weaken it; only explicit high-assurance raises "
-        "it to ML-KEM-1024. (The AI drives *transport* decisions, not crypto strength.)")
+st.info("💡 Crypto strength is set **only by data classification** (ML-KEM-768 floor; "
+        "ML-KEM-1024 only for CRITICAL data) — network conditions, threat level and battery "
+        "can never change it. The handshake is authenticated with **ML-DSA-65**: each side "
+        "verifies the other's signature against a pinned key, so a forged/MitM transcript "
+        "is rejected.")
 
 # ── auto-refresh the live section ─────────────────────────────────────────
 if auto:

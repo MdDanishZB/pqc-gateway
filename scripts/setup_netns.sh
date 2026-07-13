@@ -60,12 +60,29 @@ netns testbed UP.
 Run the stack (each in its own terminal):
   1) cd ai_module && source venv/bin/activate && python3 model_server.py
   2) cd ai_module && source venv/bin/activate && python3 dashboard/receiver.py
-  3) sudo ip netns exec $RX env GW_LOCAL_PRIMARY=10.0.0.2 GW_LOCAL_SECONDARY=10.0.1.2 \\
-         GW_SCTP_PORT=$PORT ./gateway/sctp_receiver
-  4) GW_PEER_PRIMARY=10.0.0.2 GW_PEER_SECONDARY=10.0.1.2 \\
-         GW_LOCAL_PRIMARY=10.0.0.1 GW_LOCAL_SECONDARY=10.0.1.1 GW_SCTP_PORT=$PORT ./gateway/gateway
+  3) cd gateway   # IMPORTANT: both sctp_receiver and gateway load their ML-DSA keys
+                  #  from the RELATIVE path keys/*.bin — you MUST launch them with
+                  #  cwd=gateway/, or the handshake will be UNAUTHENTICATED (or the
+                  #  gateway will ABORT expecting a signature the receiver never sends).
+     sudo ip netns exec $RX env GW_LOCAL_PRIMARY=10.0.0.2 GW_LOCAL_SECONDARY=10.0.1.2 \\
+         GW_SCTP_PORT=$PORT ./sctp_receiver
+  4) (from gateway/ again, a different terminal)
+     GW_PEER_PRIMARY=10.0.0.2 GW_PEER_SECONDARY=10.0.1.2 \\
+         GW_LOCAL_PRIMARY=10.0.0.1 GW_LOCAL_SECONDARY=10.0.1.1 GW_SCTP_PORT=$PORT \\
+         GW_TRANSPORT_ENFORCE=1 \\
+         stdbuf -o0 ./gateway 2>&1 | tee ../gw_netns.log
+
+     GW_TRANSPORT_ENFORCE=1 lets the ML-A network-condition classifier PROACTIVELY fail
+     over on a predicted POSSIBLE_PATH_FAILURE/UNSTABLE state (logged "[NetML] *** proactive
+     failover ***"), in addition to the existing threat-driven reactive failover (logged
+     "[Monitor] *** PRIMARY PATH DOWN ***"). Omit it to keep ML-A recommendation-only.
+
+  Check BOTH sides log "[PQC] Authentication: ML-DSA-65 (identity pinned)" — NOT the
+  "keys not loaded" warning — before trusting any failover measurement below.
 
 Fail / restore PATH 1:  sudo ./scripts/setup_netns.sh cut   |   restore
+Measure it honestly:    sudo ./scripts/failover_measure.sh gw_netns.log 20
+                         (run from ~/project-root, one level above gateway/)
 EOF
 }
 

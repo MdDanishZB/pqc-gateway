@@ -2,8 +2,9 @@
  * Phase 1 policy unit tests.
  *
  * Verifies the two coherence invariants:
- *   1. select_kem() NEVER returns below the security floor, for any posture
- *      (including maximal battery pressure) — the downgrade-resistance claim.
+ *   1. select_kem() is driven ONLY by data classification: ML-KEM-768 floor for
+ *      ROUTINE/SENSITIVE, ML-KEM-1024 only for CRITICAL, and it can never fall below
+ *      the floor. (Its type signature makes network/ML/battery inputs impossible.)
  *   2. decide_transport() maps verdicts to TRANSPORT actions only, and never
  *      reacts to a flood by switching paths.
  *
@@ -24,26 +25,28 @@ static int failures = 0;
 
 static void test_floor_invariant(void)
 {
-    printf("[floor invariant] select_kem never drops below CRYPTO_FLOOR\n");
+    printf("[crypto policy] select_kem driven ONLY by data classification\n");
 
-    /* Battery pressure — even maxed out — must not breach the floor. */
-    for (int bp = 0; bp <= 100; bp += 10) {
-        SecurityPosture p = { .high_assurance = 0, .battery_pressure = bp };
-        KyberLevel lvl = select_kem(&p);
-        CHECK(lvl >= CRYPTO_FLOOR, "battery pressure cannot go below floor");
-    }
+    /* ROUTINE / SENSITIVE both sit exactly at the floor (ML-KEM-768). */
+    CHECK(select_kem(CLASS_ROUTINE)   == CRYPTO_FLOOR, "ROUTINE   -> floor (ML-KEM-768)");
+    CHECK(select_kem(CLASS_SENSITIVE) == CRYPTO_FLOOR, "SENSITIVE -> floor (ML-KEM-768)");
 
-    /* Default posture sits exactly at the floor (ML-KEM-768). */
-    SecurityPosture base = { .high_assurance = 0, .battery_pressure = 0 };
-    CHECK(select_kem(&base) == CRYPTO_FLOOR, "default posture == floor");
+    /* Only CRITICAL raises to ML-KEM-1024. */
+    CHECK(select_kem(CLASS_CRITICAL)  == ML_KEM_1024,  "CRITICAL  -> ML-KEM-1024");
 
-    /* High-assurance may RAISE above the floor. */
-    SecurityPosture ha = { .high_assurance = 1, .battery_pressure = 100 };
-    CHECK(select_kem(&ha) == KYBER_1024, "high_assurance raises to ML-KEM-1024");
-    CHECK(select_kem(&ha) >= CRYPTO_FLOOR, "high_assurance still >= floor");
+    /* Every classification is always at or above the floor. */
+    CHECK(select_kem(CLASS_ROUTINE)   >= CRYPTO_FLOOR, "ROUTINE   >= floor");
+    CHECK(select_kem(CLASS_SENSITIVE) >= CRYPTO_FLOOR, "SENSITIVE >= floor");
+    CHECK(select_kem(CLASS_CRITICAL)  >= CRYPTO_FLOOR, "CRITICAL  >= floor");
 
     /* The floor itself must never be the weakest parameter set. */
-    CHECK(CRYPTO_FLOOR > KYBER_512, "floor excludes ML-KEM-512");
+    CHECK(CRYPTO_FLOOR > ML_KEM_512, "floor excludes ML-KEM-512");
+
+    /* String parsing is case-insensitive and defaults safely to ROUTINE. */
+    CHECK(data_class_from_str("critical")  == CLASS_CRITICAL,  "\"critical\"  parses");
+    CHECK(data_class_from_str("SENSITIVE") == CLASS_SENSITIVE, "\"SENSITIVE\" parses");
+    CHECK(data_class_from_str("garbage")   == CLASS_ROUTINE,   "unknown -> ROUTINE (safe default)");
+    CHECK(data_class_from_str(NULL)        == CLASS_ROUTINE,   "NULL    -> ROUTINE (safe default)");
 }
 
 static void test_transport_mapping(void)
@@ -73,10 +76,30 @@ static void test_transport_mapping(void)
           "HIGH on secondary -> hold (no restore)");
 }
 
+static void test_netstate_mapping(void)
+{
+    printf("[netcond -> transport] ML-A state maps to transport recommendation\n");
+    CHECK(netstate_to_policy("STABLE")                == NP_NORMAL,
+          "STABLE -> NORMAL");
+    CHECK(netstate_to_policy("CONGESTED")             == NP_CONGESTION_RESPONSE,
+          "CONGESTED -> CONGESTION_RESPONSE");
+    CHECK(netstate_to_policy("DEGRADED")              == NP_FAILOVER_READY,
+          "DEGRADED -> FAILOVER_READY");
+    CHECK(netstate_to_policy("UNSTABLE")              == NP_PREFER_BACKUP,
+          "UNSTABLE -> PREFER_BACKUP");
+    CHECK(netstate_to_policy("POSSIBLE_PATH_FAILURE") == NP_FAILOVER,
+          "POSSIBLE_PATH_FAILURE -> FAILOVER");
+    CHECK(netstate_to_policy(NULL)                    == NP_NORMAL,
+          "NULL -> NORMAL (safe default)");
+    CHECK(netstate_to_policy("garbage")               == NP_NORMAL,
+          "unknown -> NORMAL (safe default)");
+}
+
 int main(void)
 {
     test_floor_invariant();
     test_transport_mapping();
+    test_netstate_mapping();
 
     if (failures == 0) {
         printf("\nAll policy tests passed.\n");

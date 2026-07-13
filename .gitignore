@@ -65,6 +65,13 @@ Thumbs.db
 .demo_pids
 ai_module/gateway_capture.csv
 .demo_posture
+.demo_dataclass
 gateway/pqc_selftest
 gateway/sctp_client
 gateway/tests/test_metrics
+
+# ML-DSA long-term identities (regenerate with: make pqc_keygen && ./pqc_keygen)
+gateway/keys/
+gateway/pqc_keygen
+gateway/pqc_auth_selftest
+gateway/tests/test_handshake

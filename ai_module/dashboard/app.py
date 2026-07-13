@@ -7,40 +7,42 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("🛡️ AI-Optimized Post-Quantum SCTP Gateway")
+st.title("🛡️ Intelligent Secure Gateway")
+st.caption("Legacy TCP device → gateway → secure SCTP tunnel → control center")
 
 st.markdown("""
-### Overview
-Welcome to the PQC Gateway Control Center. This dashboard provides real-time monitoring and control over the AI-optimized Post-Quantum Cryptography (PQC) Gateway.
+### Two independent pipelines — this is the whole design
+
+```
+Legacy TCP Device
+        ↓
+Intelligent Secure Gateway
+   ├── Data sensitivity ──→ Security Policy Engine ──→ ML-KEM-768 floor
+   │                                                    (ML-KEM-1024 only for CRITICAL data)
+   ├── Network metrics ───→ ML-A classifier ──→ SCTP transport policy
+   │                        (STABLE…POSSIBLE_PATH_FAILURE → recommendation)
+   └── ML-KEM → HKDF-SHA-256 → AES-256-GCM ──→ Secure SCTP Tunnel ──→ Control Center
+```
+
+**Pipeline 1 (Security):** crypto strength is set *only* by the session's data
+classification — a policy choice, never by network conditions, ML verdicts, or battery.
+`select_kem()` takes a `DataClassification` and nothing else; that's enforced at compile time.
+
+**Pipeline 2 (Resilience):** a separate ML model reads network-health metrics (RTT, jitter,
+loss, throughput) and recommends an SCTP transport action. It never touches crypto, and its
+output is a *recommendation* until real multi-path multihoming is wired up.
 
 ### Navigation
-- **Live Monitor**: Real-time visualization of network metrics and security state.
-- **Simulation Control**: Manage traffic patterns and network conditions.
-- **Security Analyst Chat**: Interactive AI-powered security analysis.
-- **PQC Visualizer**: Understand the post-quantum handshake process.
-- **Path & Failover**: Monitor SCTP multi-homing and path switches.
-
-### System Architecture
-The gateway utilizes a **Hybrid Two-Tier Intelligence** approach:
-1. **Real-Time Tier (Random Forest)**: Per-packet classification for sub-5ms path and security level selection.
-2. **Analytical Tier (LLM)**: High-level security analysis, threat narrative, and operator assistance.
-
-Use the sidebar to navigate through the different monitoring and control modules.
+- **Live Monitor** — real-time metrics, active crypto level, transport action.
+- **Simulation Control** — drive traffic, set data classification, classify network condition.
+- **PQC & Trust** — hybrid handshake breakdown, ML-DSA authentication, self-test.
+- **Evidence** — both models' honest confusion matrices / F1, claims-discipline table.
 """)
 
 st.info("👈 Select a page from the sidebar to get started.")
 
 with st.expander("System Status"):
-    import sys, os
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-    try:
-        from llm.llm_config import LLM_BACKEND, OLLAMA_MODEL, GEMINI_MODEL
-        backend = (f"Ollama ({OLLAMA_MODEL})" if LLM_BACKEND == "ollama"
-                   else f"Gemini ({GEMINI_MODEL})" if LLM_BACKEND == "gemini"
-                   else LLM_BACKEND)
-    except Exception:
-        backend = "unknown"
-    st.write("**Gateway:** Running")
-    st.write("**AI Model Server:** Connected")
-    st.write(f"**LLM Backend:** {backend}  _(explanation only — outside the decision loop)_")
-    st.write("**Metrics DB:** Connected")
+    st.write("**Gateway:** check `.demo_logs/gateway.log` for [Policy] / [NetML] / [PQC] lines")
+    st.write("**AI Model Server:** ML-B on `/tmp/ai_gateway.sock`, "
+             "ML-A on `/tmp/ai_netcond.sock`")
+    st.write("**Metrics DB:** `ai_module/dashboard/metrics.db`")

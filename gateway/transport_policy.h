@@ -39,4 +39,29 @@ TransportAction decide_transport(const char *verdict,
 
 const char *transport_action_str(TransportAction a);
 
+/*
+ * ── Network-condition (ML-A) → SCTP transport policy ──────────────────────────
+ * The ML network-condition classifier's state maps to a transport RECOMMENDATION.
+ * This is the second, independent driver of transport (the threat verdict above is the
+ * first); like it, it never touches cryptographic strength.
+ *
+ * HONESTY GATE: until SCTP multihoming over multiple REAL paths is implemented,
+ * these are advisory only — net_policy_enforced() returns 0 and the monitor merely
+ * LOGS the recommendation rather than switching paths. When a real two-path testbed
+ * exists, set GW_TRANSPORT_ENFORCE=1 to let PREFER_BACKUP / FAILOVER act.
+ */
+typedef enum {
+    NP_NORMAL,               /* STABLE                -> normal operation         */
+    NP_CONGESTION_RESPONSE,  /* CONGESTED             -> pace / rate-limit sends   */
+    NP_FAILOVER_READY,       /* DEGRADED              -> raise failover readiness  */
+    NP_PREFER_BACKUP,        /* UNSTABLE              -> prefer / pre-warm secondary*/
+    NP_FAILOVER              /* POSSIBLE_PATH_FAILURE -> fail over to secondary    */
+} NetTransportPolicy;
+
+NetTransportPolicy netstate_to_policy(const char *state);
+const char        *net_policy_str(NetTransportPolicy p);
+
+/* 1 if GW_TRANSPORT_ENFORCE is set (real multihoming wired); else 0 = recommendation-only. */
+int net_policy_enforced(void);
+
 #endif /* TRANSPORT_POLICY_H */

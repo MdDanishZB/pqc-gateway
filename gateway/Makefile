@@ -5,11 +5,11 @@ LIBS   = -L/home/danish/liboqs/install/usr/local/lib -lsctp -lpthread -lssl -lcr
 all: gateway sctp_receiver tcp_client
 
 gateway: main.c sctp_gateway.c crypto_layer.c ai_bridge.c \
-         pqc_handshake.c metrics.c multihoming.c path_monitor.c \
+         pqc_handshake.c pqc_auth.c metrics.c multihoming.c path_monitor.c \
          metrics_reporter.c crypto_policy.c transport_policy.c net_config.c
 	$(CC) $^ -o $@ $(CFLAGS) $(LIBS)
 
-sctp_receiver: sctp_receiver.c crypto_layer.c pqc_handshake.c multihoming.c net_config.c
+sctp_receiver: sctp_receiver.c crypto_layer.c pqc_handshake.c pqc_auth.c multihoming.c net_config.c
 	$(CC) $^ -o $@ $(CFLAGS) $(LIBS)
 
 tcp_client: tcp_client.c
@@ -18,6 +18,14 @@ tcp_client: tcp_client.c
 # Standalone proof that real ML-KEM-768 (liboqs / FIPS 203) is in use.
 # liboqs must precede OpenSSL in the link line (it references libcrypto symbols).
 pqc_selftest: pqc_selftest.c
+	$(CC) $^ -o $@ $(CFLAGS) -L/home/danish/liboqs/install/usr/local/lib -loqs -lssl -lcrypto
+
+# Generate the two long-term ML-DSA-65 identities into ./keys/ (run once).
+pqc_keygen: pqc_keygen.c
+	$(CC) $^ -o $@ $(CFLAGS) -L/home/danish/liboqs/install/usr/local/lib -loqs -lssl -lcrypto
+
+# Standalone proof of ML-DSA-65 authentication: sign/verify OK, tamper -> reject.
+pqc_auth_selftest: pqc_auth_selftest.c pqc_auth.c
 	$(CC) $^ -o $@ $(CFLAGS) -L/home/danish/liboqs/install/usr/local/lib -loqs -lssl -lcrypto
 
 # ── Unit tests (no liboqs/openssl/sctp needed) ─────────────────────────────
@@ -31,5 +39,10 @@ tests/test_policy: tests/test_policy.c crypto_policy.c transport_policy.c
 tests/test_metrics: tests/test_metrics.c metrics.c
 	$(CC) $^ -o $@ $(CFLAGS) -lpthread -lm
 
+# End-to-end authenticated-handshake test (needs liboqs/openssl; no SCTP).
+tests/test_handshake: tests/test_handshake.c pqc_handshake.c pqc_auth.c
+	$(CC) $^ -o $@ $(CFLAGS) -L/home/danish/liboqs/install/usr/local/lib -loqs -lssl -lcrypto
+
 clean:
-	rm -f gateway sctp_receiver tcp_client pqc_selftest tests/test_policy tests/test_metrics
+	rm -f gateway sctp_receiver tcp_client pqc_selftest pqc_keygen pqc_auth_selftest \
+	      tests/test_policy tests/test_metrics

@@ -122,57 +122,127 @@ with col_network:
     st.markdown("**Current Interface Config:**")
     st.code(st.session_state.network_cond.get_status(), language="bash")
 
-# --- SECURITY POSTURE & CRYPTO FLOOR (demo Beat 4 — the headline) ---
+# =====================================================================================
+#  THE TWO DECOUPLED PIPELINES — the heart of the design, shown side by side.
+#  LEFT  : data classification -> crypto strength (policy-only, floored, up-only)
+#  RIGHT : network condition (ML-A) -> SCTP transport policy (recommendation by default;
+#          ENFORCED when GW_TRANSPORT_ENFORCE=1 over a real multi-path testbed)
+#  They never cross: nothing on the right can change the left.
+# =====================================================================================
 st.divider()
-st.subheader("🔒 Security Posture & Crypto Floor")
-st.caption("The AI drives TRANSPORT (failover / rate-limit); it never weakens crypto. A "
-           "battery signal may request cheaper operation but CANNOT push the KEM below the "
-           "ML-KEM-768 floor. High-assurance may only RAISE it.")
 
-POSTURE_FILE = os.environ.get("GW_POSTURE_FILE", "/tmp/gw_posture")
-colp1, colp2, colp3 = st.columns([1.3, 1, 1.4])
-
-with colp1:
-    battery = st.slider("🔋 Battery pressure (%)", 0, 100, 0,
-                        help="Simulate a draining or spoofed battery (downgrade attack)")
-    high_assurance = st.checkbox("🛡️ High-assurance mode (raise to ML-KEM-1024)")
-    if st.button("Apply Posture", type="primary", use_container_width=True):
-        try:
-            with open(POSTURE_FILE, "w") as f:
-                f.write(f"{battery} {1 if high_assurance else 0}\n")
-            st.toast(f"Posture applied: battery={battery}%  high_assurance={high_assurance}")
-        except Exception as e:
-            st.error(f"Could not write posture file {POSTURE_FILE}: {e}")
-
-with colp2:
-    try:
-        cur = open(POSTURE_FILE).read().strip()
-    except Exception:
-        cur = "0 0 (default)"
-    st.metric("Posture (battery high_assurance)", cur)
-
-with colp3:
+def _live_kem():
+    """Most recent negotiated KEM from the metrics DB (what the gateway actually used)."""
     import sqlite3
     _proot = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
     _dbp = os.path.join(_proot, "ai_module", "dashboard", "metrics.db")
     if not os.path.exists(_dbp):
         _dbp = os.path.join(_proot, "metrics.db")
-    kem = "—"
     try:
         _c = sqlite3.connect(_dbp)
         _r = _c.execute("SELECT kyber_level FROM metrics ORDER BY timestamp DESC LIMIT 1").fetchone()
         _c.close()
-        if _r:
-            kem = _r[0]
+        return _r[0] if _r else "—"
     except Exception:
-        pass
-    st.metric("Resulting crypto (live)", kem)
+        return "—"
+
+pipe_sec, pipe_res = st.columns(2)
+
+# ── PIPELINE 1 — SECURITY (data classification → crypto) ────────────────────────────
+with pipe_sec:
+    st.subheader("🔐 Pipeline 1 — Data Classification → Crypto")
+    st.caption("Crypto strength is set ONLY by the data's classification (a policy choice). "
+               "ML-KEM-768 is the immovable floor; only CRITICAL data raises it to "
+               "ML-KEM-1024. Network conditions, threat level and battery NEVER change it.")
+
+    DATA_CLASS_FILE = os.environ.get("GW_DATA_CLASS_FILE", "/tmp/gw_dataclass")
+    cls = st.radio("Data classification (policy input)",
+                   ["routine", "sensitive", "critical"], horizontal=True,
+                   help="An attribute of the channel — not derived from traffic or any ML model")
+    if st.button("Apply Classification", type="primary", use_container_width=True):
+        try:
+            with open(DATA_CLASS_FILE, "w") as f:
+                f.write(cls + "\n")
+            st.toast(f"Data classification applied: {cls.upper()}")
+        except Exception as e:
+            st.error(f"Could not write {DATA_CLASS_FILE}: {e}")
+
+    expected = "ML-KEM-1024" if cls == "critical" else "ML-KEM-768"
+    m1, m2 = st.columns(2)
+    m1.metric("Policy → KEM", expected, help="floor = ML-KEM-768")
+    kem = _live_kem()
+    m2.metric("Negotiated (live)", kem)
     if kem == "—":
         st.info("send traffic → see the negotiated KEM")
     elif "512" not in str(kem):
-        st.success("✅ FLOOR HELD (≥ ML-KEM-768)")
+        st.success("✅ FLOOR HELD (≥ ML-KEM-768) — battery / threat cannot lower it")
     else:
         st.error("⚠️ floor breached")
+
+# ── PIPELINE 2 — RESILIENCE (ML-A network condition → transport) ────────────────────
+with pipe_res:
+    st.subheader("📡 Pipeline 2 — Network Condition (ML-A) → SCTP Transport")
+    st.caption("The ML network-condition model reads path-health metrics and recommends an "
+               "SCTP transport action. It never touches crypto.")
+
+    # Reflects the ACTUAL gateway mode, not a hardcoded claim. The gateway logs
+    # "[NetML] ... [ENFORCED]" or "[... recommendation ...]" per session — this badge
+    # mirrors that by reading the SAME env var, passed through by run_demo.sh / the
+    # netns runbook. It only means something if this Streamlit process was launched
+    # with the SAME GW_TRANSPORT_ENFORCE value as the gateway it's showing.
+    _enforced = os.environ.get("GW_TRANSPORT_ENFORCE", "0") not in ("0", "", None)
+
+    NET_POLICY = {
+        "STABLE": "NORMAL", "CONGESTED": "CONGESTION_RESPONSE",
+        "DEGRADED": "FAILOVER_READY", "UNSTABLE": "PREFER_BACKUP",
+        "POSSIBLE_PATH_FAILURE": "FAILOVER",
+    }
+
+    def query_netcond(rtt, jitter, loss, thr, cwnd):
+        import socket
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(1.5)
+        s.connect("/tmp/ai_netcond.sock")
+        s.send(f"{rtt:.1f},{jitter:.1f},{loss:.2f},{thr:.1f},{cwnd:.0f}".encode())
+        r = s.recv(64).decode().strip()
+        s.close()
+        return r
+
+    st.caption("Derived from the network sliders above (latency→RTT, jitter, loss).")
+    if st.button("Classify Network Condition", use_container_width=True):
+        # derive path-health features from the current network sliders
+        _rtt = float(delay if selected_scenario == "Manual" else st.session_state.get('delay', 0))
+        _jit = float(jitter if selected_scenario == "Manual" else st.session_state.get('jitter', 0))
+        _loss = float(loss if selected_scenario == "Manual" else st.session_state.get('loss', 0))
+        _thr = max(200.0, 9000.0 * (1.0 - _loss / 100.0))
+        _cwnd = max(4.0, 60.0 - _loss)
+        try:
+            state = query_netcond(_rtt, _jit, _loss, _thr, _cwnd)
+            st.session_state["netcond_state"] = state
+        except Exception as e:
+            st.session_state["netcond_state"] = None
+            st.warning(f"ML-A socket not reachable ({e}). Is model_server.py running?")
+
+    state = st.session_state.get("netcond_state")
+    if state:
+        sev = ["STABLE", "CONGESTED", "DEGRADED", "UNSTABLE", "POSSIBLE_PATH_FAILURE"]
+        color = "green" if state == "STABLE" else ("orange" if state in ("CONGESTED", "DEGRADED") else "red")
+        n1, n2 = st.columns(2)
+        n1.markdown(f"**Network state**\n\n:{color}[{state}]")
+        n2.markdown(f"**Transport policy**\n\n{NET_POLICY.get(state, 'NORMAL')}")
+        if _enforced:
+            st.success("✅ ENFORCED — GW_TRANSPORT_ENFORCE=1: a FAILOVER/PREFER_BACKUP "
+                       "recommendation triggers a REAL path switch (proven over a real "
+                       "two-path testbed; see scripts/failover_measure.sh)")
+        else:
+            st.warning("🔸 recommendation — single-path, not enforced "
+                       "(set GW_TRANSPORT_ENFORCE=1 on the gateway AND this dashboard "
+                       "process, over a real multi-path testbed, to enforce it)")
+    else:
+        st.info("set the network sliders → click **Classify Network Condition**")
+        if _enforced:
+            st.caption("GW_TRANSPORT_ENFORCE=1 is set on this dashboard process — "
+                      "recommendations below would be ENFORCED.")
 
 # --- FOOTER: QUICK ACTIONS ---
 st.divider()
