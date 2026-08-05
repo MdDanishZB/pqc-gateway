@@ -1,0 +1,77 @@
+# ── Secrets ───────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Datasets (large / licensed — keep out of git) ─────────────────────────
+dataset/*.parquet
+dataset/*.csv
+data/*.parquet
+data/*.csv
+ai_module/data/            # derived train/test splits (regenerable via prepare_dataset.py)
+ai_module/dataset.csv
+
+# ── Python ────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.ipynb_checkpoints/
+
+# Virtual environments
+ai_module/venv/
+venv/
+.venv/
+env/
+
+# ── Runtime data / logs (regenerated) ─────────────────────────────────────
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.log
+/tmp/ai_gateway.sock
+
+# ── C gateway build artifacts ─────────────────────────────────────────────
+gateway/gateway
+gateway/sctp_receiver
+gateway/tcp_client
+gateway/tests/test_policy
+*.o
+*.out
+
+# ── Java dashboard (legacy) build output ──────────────────────────────────
+java_dashboard/**/target/
+
+# ── ML models ─────────────────────────────────────────────────────────────
+# Keep the serving model (rf_model.pkl), label_encoder.pkl, metrics.json and the
+# confusion-matrix PNGs committed. The per-split auxiliary models are large (~37 MB)
+# and regenerable via train_model.py, so ignore them.
+ai_module/models/rf_strat.pkl
+ai_module/models/rf_byday.pkl
+models/*.tmp
+
+# ── OS / editor ───────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# ── Demo runtime (run_demo.sh) ────────────────────────────────────────────
+.demo_logs/
+.demo_pids
+ai_module/gateway_capture.csv
+.demo_posture
+.demo_dataclass
+gateway/pqc_selftest
+gateway/sctp_client
+gateway/tests/test_metrics
+
+# ML-DSA long-term identities (regenerate with: make pqc_keygen && ./pqc_keygen)
+gateway/keys/
+gateway/pqc_keygen
+gateway/pqc_auth_selftest
+gateway/tests/test_handshake

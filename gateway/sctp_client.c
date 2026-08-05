@@ -18,7 +18,7 @@ int main() {
     char message[] = "Hello from SCTP Client";
 
     sockfd = socket(AF_INET,
-                    SOCK_STREAM,
+                    SOCK_SEQPACKET,
                     IPPROTO_SCTP);
 
     if(sockfd < 0) {
